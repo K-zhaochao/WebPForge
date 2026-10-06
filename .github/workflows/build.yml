@@ -112,6 +112,36 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
+      # 提前检查令牌权限。若仓库的 Actions 权限是只读, 创建 Release 会失败,
+      # 这里给出明确的中文提示, 而不是抛一个难懂的 403。
+      - name: 检查发布权限
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          perms=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}" \
+            | grep -o '"permissions":{[^}]*}' || true)
+          echo "令牌权限: ${perms:-未知}"
+          if ! echo "$perms" | grep -q '"push":true'; then
+            echo ""
+            echo "=========================================================="
+            echo " [错误] 当前工作流令牌没有写权限, 无法创建 Release。"
+            echo ""
+            echo " 请到仓库页面开启写权限后重新运行:"
+            echo "   Settings -> Actions -> General"
+            echo "   -> Workflow permissions"
+            echo "   -> 选择 \"Read and write permissions\" -> Save"
+            echo ""
+            echo " 开启后, 在 Actions 页面重新运行本工作流即可。"
+            echo "=========================================================="
+            echo ""
+            exit 1
+          fi
+          echo "[OK] 令牌具备写权限, 可以发布 Release"
+
       - name: 汇总所有平台的产物
         uses: actions/download-artifact@v4
         with:
