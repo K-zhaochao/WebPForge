@@ -1,0 +1,46 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.venv-macos/
+venv/
+env/
+
+# ---- PyInstaller 构建产物 ----
+build/
+dist/
+*.manifest
+*.pkg
+
+# ---- 本地产出的发布包(由 CI 生成, 不入库) ----
+release/
+
+# ---- 测试 / 临时数据 ----
+_testdata/
+_stress/
+_gui_test_out/
+_final_test/
+_final_out/
+_v2/
+_v*/
+*_selftest.txt
+*_自检结果.txt
+webpforge_error.log
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- 自动生成的图标(由 tools/make_icon.py 生成) ----
+assets/icon.iconset/
+
+# ---- 测试覆盖率 ----
+.coverage
+coverage.xml
+htmlcov/
+

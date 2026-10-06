@@ -1,0 +1,200 @@
+name: Build & Release
+
+# 推送版本 tag (如 v1.0.0) 时自动打包并创建 GitHub Release;
+# 也可以在 Actions 页面手动触发, 只构建不发布。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write        # 创建 Release 需要写权限
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1) 三个平台各自打包(互不影响, 任一失败不阻塞其它)
+  # ---------------------------------------------------------------------------
+  build:
+    name: 打包 ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    # 注意: GitHub 正在逐步下线 macos-13(Intel) 镜像。
+    # 这里设为不阻塞, 万一 Intel 镜像不可用, Windows 与 Apple Silicon 仍会正常发布。
+    continue-on-error: ${{ matrix.optional == true }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows-x64
+            os: windows-latest
+            kind: windows
+          - name: macOS-ARM64
+            os: macos-14          # Apple Silicon (M 系列)
+            kind: macos
+          - name: macOS-Intel
+            os: macos-13          # Intel (可选, 镜像下线后自动跳过)
+            kind: macos
+            optional: true
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 tkinter (仅 macOS 需要)
+        if: matrix.kind == 'macos'
+        run: |
+          brew install python-tk@3.12 || brew install python-tk || true
+          python3 -c "import tkinter; print('tkinter OK', tkinter.TkVersion)"
+
+      - name: 安装依赖
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pillow pyinstaller
+
+      # ---------- Windows ----------
+      - name: 打包 (Windows)
+        if: matrix.kind == 'windows'
+        shell: pwsh
+        run: .\build_windows.ps1 -SkipZip
+
+      - name: 上传 Windows 产物
+        if: matrix.kind == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebPForge-${{ matrix.name }}
+          path: |
+            dist/WebPForge.exe
+            README.md
+            README.en.md
+            LICENSE
+          if-no-files-found: error
+
+      # ---------- macOS ----------
+      - name: 打包 (macOS)
+        if: matrix.kind == 'macos'
+        shell: bash
+        run: |
+          chmod +x build_macos.sh
+          ./build_macos.sh
+
+      - name: 校验 .app 结构
+        if: matrix.kind == 'macos'
+        shell: bash
+        run: |
+          test -x "dist/WebPForge.app/Contents/MacOS/WebPForge" \
+            || { echo "!! .app 结构不完整"; exit 1; }
+          echo "ok: dist/WebPForge.app"
+
+      - name: 上传 macOS 产物
+        if: matrix.kind == 'macos'
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebPForge-${{ matrix.name }}
+          path: dist/WebPForge.app
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 2) 下载全部产物 -> 打成可双击的压缩包 -> 创建 Release
+  # ---------------------------------------------------------------------------
+  release:
+    name: 创建 Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 汇总所有平台的产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 打包成发布资源
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          echo "=== 收到的产物 ==="
+          find artifacts -maxdepth 2 | sort
+
+          # Windows: exe + 使用说明 + 命令行启动器
+          WIN="artifacts/WebPForge-Windows-x64"
+          if [ -f "$WIN/WebPForge.exe" ]; then
+            mkdir -p stage-win
+            cp "$WIN/WebPForge.exe" stage-win/
+            for extra in README.md README.en.md LICENSE convert.bat; do
+              [ -f "$WIN/$extra" ] && cp "$WIN/$extra" stage-win/ || true
+              [ -f "$extra" ] && cp "$extra" stage-win/ 2>/dev/null || true
+            done
+            (cd stage-win && zip -r -q "../out/WebPForge-${VERSION}-Windows-x64.zip" .)
+            echo "OK  Windows 包已生成"
+          else
+            echo "!! 缺少 Windows 产物"; exit 1
+          fi
+
+          # macOS: 必须压缩后分发, 否则 .app 的权限与符号链接会丢失
+          mac_found=""
+          for arch in ARM64 Intel; do
+            SRC="artifacts/WebPForge-macOS-${arch}/WebPForge.app"
+            if [ -d "$SRC" ]; then
+              mkdir -p "stage-mac-${arch}"
+              cp -R "$SRC" "stage-mac-${arch}/"
+              for extra in README.md README.en.md LICENSE; do
+                [ -f "$extra" ] && cp "$extra" "stage-mac-${arch}/" || true
+              done
+              (cd "stage-mac-${arch}" && \
+                zip -r -q --symlinks "../out/WebPForge-${VERSION}-macOS-${arch}.zip" .)
+              mac_found="yes"
+              echo "OK  macOS-${arch} 包已生成"
+            else
+              echo "-- macOS-${arch} 产物缺失, 跳过(Intel 镜像可能已下线)"
+            fi
+          done
+
+          if [ -z "$mac_found" ]; then
+            echo "!! 没有任何 macOS 产物, 中止发布"; exit 1
+          fi
+
+          echo "=== 即将发布的文件 ==="
+          ls -lh out/
+
+      - name: 生成 Release 说明
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+
+          # 版本号与下载链接按本次 tag 动态替换, 模板见 .github/RELEASE_BODY.md
+          sed -e "s|^## WebPForge$|## WebPForge v${VERSION}|" \
+              -e "s|WebPForge-Windows-x64\.zip|WebPForge-${VERSION}-Windows-x64.zip|g" \
+              -e "s|WebPForge-macOS-ARM64\.zip|WebPForge-${VERSION}-macOS-ARM64.zip|g" \
+              -e "s|WebPForge-macOS-Intel\.zip|WebPForge-${VERSION}-macOS-Intel.zip|g" \
+              -e "s|OWNER/REPO|${GITHUB_REPOSITORY}|g" \
+              .github/RELEASE_BODY.md > RELEASE_BODY.md
+
+          echo "=== Release 说明预览 ==="
+          head -20 RELEASE_BODY.md
+
+      - name: 发布到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: WebPForge v${{ github.ref_name }}
+          body_path: RELEASE_BODY.md
+          files: out/*.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,19 @@
+# 统一换行符, 避免在不同系统间检出后脚本无法执行
+* text=auto eol=lf
+
+# Windows 批处理必须使用 CRLF, 否则 cmd.exe 可能解析异常
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# macOS / Linux 脚本保持 LF
+*.sh text eol=lf
+
+# 二进制文件不做任何转换
+*.exe binary
+*.ico binary
+*.icns binary
+*.png binary
+*.webp binary
+*.zip binary
+*.dmg binary
