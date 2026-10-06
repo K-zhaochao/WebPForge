@@ -1,0 +1,13 @@
+﻿fix(ci): 打包步骤缺少 zip 命令导致发布失败
+
+GitHub 的 ubuntu 镜像不保证预装 zip, 之前 release 作业在
+"打包成发布资源" 步骤以 command not found 失败(本地已复现:
+bash: zip: command not found, 退出码 127)。
+
+修复:
+- 新增"准备打包工具"步骤, 显式安装 zip 并校验
+- 打包前再次确认 zip 可用, 缺了就明确报错
+- 新增"列出收到的产物"步骤, 打印 artifacts 目录树, 便于排错
+
+说明: macOS 的 .app 仍用 zip 而非 Python zipfile 打包,
+否则会丢失符号链接与可执行权限。

@@ -132,17 +132,41 @@ jobs:
         with:
           path: artifacts
 
+      # GitHub 的 ubuntu 镜像不保证预装 zip。之前打包步骤就是因为
+      # "zip: command not found" 而失败的, 这里显式装上。
+      # macOS 的 .app 必须用 zip(而非 Python 的 zipfile)打包, 否则会丢符号链接与执行权限。
+      - name: 准备打包工具
+        shell: bash
+        run: |
+          set -uo pipefail
+          if command -v zip >/dev/null 2>&1; then
+            echo "zip 已存在: $(zip -v | head -1)"
+          else
+            echo "未找到 zip, 正在安装..."
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq zip
+            command -v zip >/dev/null 2>&1 || { echo "!! zip 安装失败"; exit 1; }
+            echo "zip 安装完成"
+          fi
+
+      - name: 列出收到的产物
+        shell: bash
+        run: |
+          echo "=== artifacts 目录树 ==="
+          find artifacts -maxdepth 3 | sort
+          echo ""
+          echo "=== 关键文件核对 ==="
+          ls -la artifacts/WebPForge-Windows-x64/ || true
+          ls -la artifacts/WebPForge-macOS-ARM64/ || true
+
       - name: 打包成发布资源
         shell: bash
         run: |
           set -euo pipefail
+          command -v zip >/dev/null || { echo "!! 缺少 zip 命令"; exit 1; }
           mkdir -p out
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
-
-          echo "=== 收到的产物 ==="
-          find artifacts -maxdepth 2 | sort
-
           # Windows: exe + 使用说明 + 命令行启动器
           WIN="artifacts/WebPForge-Windows-x64"
           if [ -f "$WIN/WebPForge.exe" ]; then
