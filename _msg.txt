@@ -1,13 +1,18 @@
-﻿fix(ci): 打包脚本改为搜索产物而非硬编码路径
+﻿fix(ci): 修正上传/打包两端的产物布局问题, 发布流程打通
 
-之前脚本写死了 artifacts/WebPForge-Windows-x64/WebPForge.exe,
-一旦 download-artifact 的实际布局与预期不同就会以退出码 1 直接失败,
-而 GitHub 的日志又需要登录才能查看, 排查成本很高。
+通过把失败日志末尾写进 error 注解(运行页面无需登录即可看到),
+终于定位到真实原因 —— 上传端与打包端对布局的假设都不对:
 
-改动:
-- 用 find 搜索 WebPForge.exe 与 WebPForge.app, 兼容任意目录布局
-- 从 .app 所在路径推断架构(ARM64 / Intel / Universal)
-- 打印完整的产物目录树与每一步的决策, 失败原因一目了然
-- 失败时把日志末尾放进 error 注解, 无需登录即可在运行页面看到原因
+1. Windows 产物下载后实际是 artifacts/WebPForge-Windows-x64/dist/WebPForge.exe
+   (上传 dist/WebPForge.exe 会保留 dist 这一层), 而脚本写死的是不带 dist 的路径
+2. macOS 上传裸 .app 目录时会被展开成 Contents/, 外层 WebPForge.app 名字丢失,
+   下载后根本不存在 .app, 这是最隐蔽的一处
 
-已本地验证完整路径: 用真实 exe 与 .app 结构跑通, 退出码 0, 正确产出两个 zip。
+修复:
+- macOS 构建端先用 ditto 压成 WebPForge.app.zip 再上传, 保住 .app 结构
+- 打包脚本改为用 find 搜索产物, 兼容任意层级; 对 .app.zip 先解包再重新打包
+- 解压改用 Python 标准库 zipfile, 不再依赖 unzip(精简镜像不保证预装)
+  —— 这一条也是本地复现"unzip: command not found"后才发现的
+- 准备打包工具步骤同时检查 zip 与 unzip, 缺哪个装哪个
+
+本地已用真实 exe 与 CI 的实际目录布局完整跑通: 退出码 0, 正确产出两个 zip。

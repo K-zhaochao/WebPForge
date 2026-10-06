@@ -63,6 +63,7 @@ jobs:
           for f in README.md README.en.md LICENSE; do
             [ -f "$f" ] && cp "$f" stage/ || true
           done
+          # .app 必须先压缩再上传, 否则上传时会被展开, 外层 .app 名字丢失
           (cd stage && zip -r -q --symlinks "../out/WebPForge-${VERSION}-macOS-Intel.zip" .)
           ls -lh out/
 

@@ -66,6 +66,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: WebPForge-${{ matrix.name }}
+          # 注意: 只上传文件, 目录结构会被保留。若上传 dist/ 目录,
+          # 下载后会多一层 dist/, 打包脚本已用 find 搜索, 两种布局都能处理。
           path: |
             dist/WebPForge.exe
             README.md
@@ -89,12 +91,29 @@ jobs:
             || { echo "!! .app 结构不完整"; exit 1; }
           echo "ok: dist/WebPForge.app"
 
+      - name: 打成 zip (保留 .app 结构)
+        if: matrix.kind == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-artifact
+          # 关键: 必须先压缩再上传。
+          # .app 本质是目录, 直接上传会被当成普通文件夹展开,
+          # 下载后只剩 Contents/, 外层 WebPForge.app 会丢失。
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/WebPForge.app dist-artifact/WebPForge.app.zip
+          ls -lh dist-artifact/
+
       - name: 上传 macOS 产物
         if: matrix.kind == 'macos'
         uses: actions/upload-artifact@v4
         with:
           name: WebPForge-${{ matrix.name }}
-          path: dist/WebPForge.app
+          path: |
+            dist-artifact/WebPForge.app.zip
+            README.md
+            README.en.md
+            LICENSE
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
@@ -141,15 +160,19 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          if command -v zip >/dev/null 2>&1; then
-            echo "zip 已存在: $(zip -v | head -1)"
-          else
-            echo "未找到 zip, 正在安装..."
+          # zip 有时不预装; unzip 是备用解压方案(脚本优先用 Python 标准库)
+          need=""
+          command -v zip    >/dev/null 2>&1 || need="$need zip"
+          command -v unzip  >/dev/null 2>&1 || need="$need unzip"
+          if [ -n "$need" ]; then
+            echo "缺少:$need —— 正在安装..."
             sudo apt-get update -qq
-            sudo apt-get install -y -qq zip
-            command -v zip >/dev/null 2>&1 || { echo "!! zip 安装失败"; exit 1; }
-            echo "zip 安装完成"
+            sudo apt-get install -y -qq $need
           fi
+          command -v zip >/dev/null 2>&1 || { echo "!! zip 不可用"; exit 1; }
+          echo "zip  : $(command -v zip)"
+          echo "unzip: $(command -v unzip || echo '无(将使用 Python 标准库解压)')"
+          echo "python3: $(command -v python3 || echo 无)"
 
       - name: 列出收到的产物
         shell: bash

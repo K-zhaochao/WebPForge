@@ -22,6 +22,19 @@ die() { echo "[package][错误] $*" >&2; exit 1; }
 
 command -v zip >/dev/null 2>&1 || die "缺少 zip 命令"
 
+# 解压优先用 Python(zipfile 是标准库, 必然可用),
+# 避免再依赖 unzip —— 精简的 runner 镜像并不保证装了它。
+extract_zip() {
+    local src="$1" dest="$2"
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$src" "$dest"
+    elif command -v unzip >/dev/null 2>&1; then
+        unzip -q "$src" -d "$dest"
+    else
+        die "既没有 python3 也没有 unzip, 无法解压 $src"
+    fi
+}
+
 [ -d "$ARTIFACTS_DIR" ] || die "找不到产物目录: $ARTIFACTS_DIR"
 
 log "版本号   : $VERSION"
@@ -64,20 +77,54 @@ log "已生成 WebPForge-${VERSION}-Windows-x64.zip"
 log ""
 
 # ---------------------------------------------------------------------------
-# macOS: 搜索 .app 包, 按所在目录名推断架构
-#   自动流程只产出 ARM64; Intel 由 build-intel.yml 手动构建, 有就一起打进来
+# macOS
+#   构建端会上传 WebPForge.app.zip 而不是裸目录 —— .app 本质是目录,
+#   直接上传会被展开成 Contents/, 外层 .app 名字会丢失。
+#   这里解开 .app.zip 后重新打包, 顺手把说明文档一起放进去。
 # ---------------------------------------------------------------------------
 mac_count=0
-while IFS= read -r APP_PATH; do
-    [ -n "$APP_PATH" ] || continue
-    # 从路径里推断架构(ARM64 / Intel), 推断不出就标记为 Universal
-    case "$APP_PATH" in
+while IFS= read -r APP_ZIP; do
+    [ -n "$APP_ZIP" ] || continue
+
+    # 从路径推断架构(ARM64 / Intel), 推断不出就标记为 Universal
+    case "$APP_ZIP" in
         *ARM64*)   arch="ARM64" ;;
         *Intel*)   arch="Intel" ;;
         *)         arch="Universal" ;;
     esac
 
-    log "找到 macOS 应用: $APP_PATH  -> 架构 $arch"
+    work="unpack-$arch"
+    rm -rf "$work" "stage-mac-$arch"
+    mkdir -p "$work" "stage-mac-$arch"
+
+    log "找到 macOS 包: $APP_ZIP  -> 架构 $arch"
+    if ! extract_zip "$APP_ZIP" "$work"; then
+        die "解压失败: $APP_ZIP"
+    fi
+
+    APP_PATH="$(find "$work" -maxdepth 2 -type d -name 'WebPForge.app' | head -1)"
+    [ -n "$APP_PATH" ] || die "解压后没找到 WebPForge.app: $APP_ZIP"
+
+    cp -R "$APP_PATH" "stage-mac-$arch/"
+    for extra in README.md README.en.md LICENSE; do
+        [ -f "$extra" ] && cp "$extra" "stage-mac-$arch/"
+    done
+
+    ( cd "stage-mac-$arch" && \
+      zip -r -q --symlinks "../$OUT_DIR/WebPForge-${VERSION}-macOS-${arch}.zip" . )
+    log "已生成 WebPForge-${VERSION}-macOS-${arch}.zip"
+    mac_count=$((mac_count + 1))
+done < <(find "$ARTIFACTS_DIR" -type f -name 'WebPForge.app.zip' | sort)
+
+# 兼容: 万一是裸 .app 目录(旧布局), 也照样处理
+while IFS= read -r APP_PATH; do
+    [ -n "$APP_PATH" ] || continue
+    case "$APP_PATH" in
+        *ARM64*)   arch="ARM64" ;;
+        *Intel*)   arch="Intel" ;;
+        *)         arch="Universal" ;;
+    esac
+    log "找到 macOS 应用目录: $APP_PATH  -> 架构 $arch"
     rm -rf "stage-mac-$arch"
     mkdir -p "stage-mac-$arch"
     cp -R "$APP_PATH" "stage-mac-$arch/"
@@ -90,7 +137,7 @@ while IFS= read -r APP_PATH; do
     mac_count=$((mac_count + 1))
 done < <(find "$ARTIFACTS_DIR" -type d -name 'WebPForge.app' | sort)
 
-[ "$mac_count" -gt 0 ] || die "在 $ARTIFACTS_DIR 里找不到任何 WebPForge.app"
+[ "$mac_count" -gt 0 ] || die "在 $ARTIFACTS_DIR 里找不到 macOS 产物(.app.zip 或 .app 目录都没有)"
 log ""
 
 # ---------------------------------------------------------------------------
