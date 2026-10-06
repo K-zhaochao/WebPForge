@@ -1,10 +1,13 @@
-﻿refactor(ci): 打包逻辑抽成可本地复现的脚本, 并把日志写进 Job Summary
+﻿fix(ci): 打包脚本改为搜索产物而非硬编码路径
 
-打包步骤在 CI 上连续失败, 但 GitHub 的原始日志需要登录才能查看,
-排查效率极低。本次改动:
+之前脚本写死了 artifacts/WebPForge-Windows-x64/WebPForge.exe,
+一旦 download-artifact 的实际布局与预期不同就会以退出码 1 直接失败,
+而 GitHub 的日志又需要登录才能查看, 排查成本很高。
 
-- 打包逻辑移到 tools/package_release.sh, 可在本地用真实产物直接跑,
-  已验证: 分支判断、产物校验、错误信息均正确
-- 工作流改为调用该脚本, 并把输出同时写进 GITHUB_STEP_SUMMARY
-  (Summary 无需登录即可查看), 失败时能直接看到真实报错
-- 脚本自身带明确的前置检查与中文错误信息, 便于定位缺什么
+改动:
+- 用 find 搜索 WebPForge.exe 与 WebPForge.app, 兼容任意目录布局
+- 从 .app 所在路径推断架构(ARM64 / Intel / Universal)
+- 打印完整的产物目录树与每一步的决策, 失败原因一目了然
+- 失败时把日志末尾放进 error 注解, 无需登录即可在运行页面看到原因
+
+已本地验证完整路径: 用真实 exe 与 .app 结构跑通, 退出码 0, 正确产出两个 zip。

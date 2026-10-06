@@ -103,6 +103,8 @@ jobs:
   release:
     name: 创建 Release
     needs: build
+    # tag 推送时才会真正发布; 手动触发只做构建与打包演练(不产生 Release),
+    # 方便在不污染 Releases 的前提下验证发布流程。
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
 
@@ -188,7 +190,10 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$rc" -ne 0 ]; then
-            echo "::error::打包失败, 退出码 $rc —— 详见本次运行的 Summary 面板"
+            # 把日志末尾放进 error 注解 —— 注解会渲染在运行页面上,
+            # 即使不登录也能看到失败原因, 省去翻日志的麻烦。
+            hint="$(tail -c 600 /tmp/pkg.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r//g')"
+            echo "::error::打包失败(退出码 $rc)。末尾日志: ${hint}"
             exit "$rc"
           fi
           echo "打包成功"
