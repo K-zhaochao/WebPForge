@@ -162,52 +162,36 @@ jobs:
       - name: 打包成发布资源
         shell: bash
         run: |
-          set -euo pipefail
-          command -v zip >/dev/null || { echo "!! 缺少 zip 命令"; exit 1; }
-          mkdir -p out
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
-          # Windows: exe + 使用说明 + 命令行启动器
-          WIN="artifacts/WebPForge-Windows-x64"
-          if [ -f "$WIN/WebPForge.exe" ]; then
-            mkdir -p stage-win
-            cp "$WIN/WebPForge.exe" stage-win/
-            for extra in README.md README.en.md LICENSE convert.bat; do
-              [ -f "$WIN/$extra" ] && cp "$WIN/$extra" stage-win/ || true
-              [ -f "$extra" ] && cp "$extra" stage-win/ 2>/dev/null || true
-            done
-            (cd stage-win && zip -r -q "../out/WebPForge-${VERSION}-Windows-x64.zip" .)
-            echo "OK  Windows 包已生成"
-          else
-            echo "!! 缺少 Windows 产物"; exit 1
+          set -uo pipefail
+          chmod +x tools/package_release.sh
+
+          {
+            echo "### 发布打包日志"
+            echo ""
+            echo '```'
+            echo "zip  : $(command -v zip || echo 未找到)"
+            echo "版本 : ${GITHUB_REF_NAME}"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # 输出同时进 stdout 与 Job Summary —— Summary 无需登录即可查看, 便于排错
+          set +e
+          bash tools/package_release.sh artifacts out "${GITHUB_REF_NAME#v}" 2>&1 | tee /tmp/pkg.log
+          rc=${PIPESTATUS[0]}
+          set -e
+
+          {
+            cat /tmp/pkg.log
+            echo '```'
+            echo ""
+            echo "退出码: \`$rc\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::打包失败, 退出码 $rc —— 详见本次运行的 Summary 面板"
+            exit "$rc"
           fi
-
-          # macOS: 必须压缩后分发, 否则 .app 的权限与符号链接会丢失
-          mac_found=""
-          for arch in ARM64 Intel; do
-            SRC="artifacts/WebPForge-macOS-${arch}/WebPForge.app"
-            if [ -d "$SRC" ]; then
-              mkdir -p "stage-mac-${arch}"
-              cp -R "$SRC" "stage-mac-${arch}/"
-              for extra in README.md README.en.md LICENSE; do
-                [ -f "$extra" ] && cp "$extra" "stage-mac-${arch}/" || true
-              done
-              (cd "stage-mac-${arch}" && \
-                zip -r -q --symlinks "../out/WebPForge-${VERSION}-macOS-${arch}.zip" .)
-              mac_found="yes"
-              echo "OK  macOS-${arch} 包已生成"
-            else
-              # Intel 由手动工作流产出, 本流程不含它
-              echo "-- 本次没有 macOS-${arch} 产物(Intel 需手动触发 build-intel.yml)"
-            fi
-          done
-
-          if [ -z "$mac_found" ]; then
-            echo "!! 没有任何 macOS 产物, 中止发布"; exit 1
-          fi
-
-          echo "=== 即将发布的文件 ==="
-          ls -lh out/
+          echo "打包成功"
 
       - name: 生成 Release 说明
         shell: bash

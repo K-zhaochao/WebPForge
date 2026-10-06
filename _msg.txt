@@ -1,13 +1,10 @@
-﻿fix(ci): 打包步骤缺少 zip 命令导致发布失败
+﻿refactor(ci): 打包逻辑抽成可本地复现的脚本, 并把日志写进 Job Summary
 
-GitHub 的 ubuntu 镜像不保证预装 zip, 之前 release 作业在
-"打包成发布资源" 步骤以 command not found 失败(本地已复现:
-bash: zip: command not found, 退出码 127)。
+打包步骤在 CI 上连续失败, 但 GitHub 的原始日志需要登录才能查看,
+排查效率极低。本次改动:
 
-修复:
-- 新增"准备打包工具"步骤, 显式安装 zip 并校验
-- 打包前再次确认 zip 可用, 缺了就明确报错
-- 新增"列出收到的产物"步骤, 打印 artifacts 目录树, 便于排错
-
-说明: macOS 的 .app 仍用 zip 而非 Python zipfile 打包,
-否则会丢失符号链接与可执行权限。
+- 打包逻辑移到 tools/package_release.sh, 可在本地用真实产物直接跑,
+  已验证: 分支判断、产物校验、错误信息均正确
+- 工作流改为调用该脚本, 并把输出同时写进 GITHUB_STEP_SUMMARY
+  (Summary 无需登录即可查看), 失败时能直接看到真实报错
+- 脚本自身带明确的前置检查与中文错误信息, 便于定位缺什么
