@@ -1,0 +1,74 @@
+name: Build macOS Intel (manual)
+
+# Intel 版手动构建。
+#
+# 为什么不放进自动发布流程:
+#   GitHub 的 Intel 构建机(macos-13)正在被下线, 排队时间经常超过 30 分钟,
+#   有时干脆分配不到机器。如果把它放进 Build & Release, release 任务会一直
+#   等它, 整个版本都发不出去。
+#
+# 所以拆成独立工作流: 需要 Intel 包时, 在 Actions 页面点
+#   "Build macOS Intel (manual)" -> Run workflow
+# 构建完成后从该次运行的 Artifacts 里下载 WebPForge-macOS-Intel.zip。
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-intel:
+    name: 打包 macOS-Intel
+    runs-on: macos-13
+    timeout-minutes: 45      # 排队超过 45 分钟直接放弃, 不无限占用
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装 tkinter
+        run: |
+          brew install python-tk@3.12 || brew install python-tk || true
+          python3 -c "import tkinter; print('tkinter OK', tkinter.TkVersion)"
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pillow pyinstaller
+
+      - name: 打包
+        run: |
+          chmod +x build_macos.sh
+          ./build_macos.sh
+
+      - name: 校验 .app 结构
+        run: |
+          test -x "dist/WebPForge.app/Contents/MacOS/WebPForge" \
+            || { echo "!! .app 结构不完整"; exit 1; }
+          lipo -archs "dist/WebPForge.app/Contents/MacOS/WebPForge" || true
+          echo "ok: dist/WebPForge.app"
+
+      - name: 打成 zip
+        run: |
+          set -euo pipefail
+          VERSION="$(git describe --tags --abbrev=0 2>/dev/null || echo v0.0.0)"
+          VERSION="${VERSION#v}"
+          mkdir -p out stage
+          cp -R dist/WebPForge.app stage/
+          for f in README.md README.en.md LICENSE; do
+            [ -f "$f" ] && cp "$f" stage/ || true
+          done
+          (cd stage && zip -r -q --symlinks "../out/WebPForge-${VERSION}-macOS-Intel.zip" .)
+          ls -lh out/
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebPForge-macOS-Intel
+          path: out/*.zip
+          if-no-files-found: error

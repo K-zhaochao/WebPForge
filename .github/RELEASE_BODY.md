@@ -12,10 +12,12 @@ A desktop batch image → WebP converter. Just double-click to run — no Python
 |---|---|---|
 | Windows 10/11 (x64) | `WebPForge-Windows-x64.zip` | 解压后双击 `WebPForge.exe` |
 | macOS（Apple Silicon / M 系列） | `WebPForge-macOS-ARM64.zip` | 解压后双击 `WebPForge.app` |
-| macOS（Intel） | `WebPForge-macOS-Intel.zip` | 解压后双击 `WebPForge.app`（若本次未提供，见下） |
+| macOS（Intel） | 需手动构建，见下 | — |
 
-> Intel 版依赖 GitHub 的 Intel 构建机，该镜像正在被逐步下线，因此个别版本可能不包含 Intel 包。
-> 遇到这种情况，可在 Intel Mac 上执行 `./build_macos.sh` 自行打包，步骤见 README。
+> **Intel Mac 用户**：GitHub 的 Intel 构建机排队时间极长，为避免拖慢整个发布流程，
+> Intel 包改为手动触发。请到
+> [Actions → Build macOS Intel (manual)](https://github.com/OWNER/REPO/actions/workflows/build-intel.yml)
+> 点 **Run workflow**，完成后在该次运行的 Artifacts 中下载 Intel 版。
 
 ### 首次打开提示
 

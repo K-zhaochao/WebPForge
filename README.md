@@ -25,7 +25,13 @@
 |---|---|
 | Windows 10/11 (x64) | `WebPForge-<版本>-Windows-x64.zip` → 双击 `WebPForge.exe` |
 | macOS（Apple Silicon / M 系列） | `WebPForge-<版本>-macOS-ARM64.zip` → 双击 `WebPForge.app` |
-| macOS（Intel） | `WebPForge-<版本>-macOS-Intel.zip` → 双击 `WebPForge.app` |
+| macOS（Intel） | 见下方说明 ↓ |
+
+> **Intel Mac 用户**：GitHub 的 Intel 构建机（`macos-13`）正在被下线，排队时间极长，
+> 因此 Intel 包改为**手动触发构建**，放在 Release 里会拖垮整个发布流程。
+> 需要 Intel 版时，到 [Actions → Build macOS Intel (manual)](https://github.com/K-zhaochao/WebPForge/actions/workflows/build-intel.yml)
+> 点 **Run workflow**，构建完成后在该次运行的 Artifacts 里下载 `WebPForge-macOS-Intel.zip`。
+> 或者直接在 Intel Mac 上执行 `./build_macos.sh` 自行打包。
 
 > 程序未做代码签名，首次运行会有系统提示，属正常现象：
 > - **Windows**：SmartScreen 提示 →「更多信息」→「仍要运行」
@@ -194,7 +200,11 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-流程见 [`.github/workflows/build.yml`](.github/workflows/build.yml)：Windows 与两种 macOS 架构并行打包 → 汇总为可双击的 zip → 创建 Release 并附上各平台安装包。
+流程见 [`.github/workflows/build.yml`](.github/workflows/build.yml)：Windows 与 Apple Silicon 并行打包 → 汇总为可双击的 zip → 创建 Release 并附上安装包。
+
+Intel 版由 [`.github/workflows/build-intel.yml`](.github/workflows/build-intel.yml) 手动触发构建，
+**故意不放进自动发布流程**——GitHub 的 Intel 构建机排队时间经常超过 30 分钟，
+把它挂进 `release` 的依赖会让整个版本发不出去。
 
 Release 说明模板位于 [`.github/RELEASE_BODY.md`](.github/RELEASE_BODY.md)，
 其中的版本号与下载文件名会在发布时自动替换。
@@ -216,7 +226,9 @@ WebPForge/
 ├── version_info.txt             # exe 版本资源信息
 ├── assets/                      # 图标（由 make_icon.py 生成）
 ├── .github/
-│   ├── workflows/build.yml      # 三平台打包 + 自动发 Release
+│   ├── workflows/
+│   │   ├── build.yml            # 自动打包 Windows + Apple Silicon 并发布 Release
+│   │   └── build-intel.yml      # Intel 版手动构建（避免拖慢发布）
 │   └── RELEASE_BODY.md          # Release 说明模板
 └── tools/
     ├── make_icon.py             # 生成 .ico / .icns 图标

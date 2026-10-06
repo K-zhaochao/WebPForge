@@ -13,14 +13,16 @@ permissions:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1) 三个平台各自打包(互不影响, 任一失败不阻塞其它)
+  # 1) 自动发布用到的平台, 并行打包(互不影响)
+  #
+  # 注意: 这里刻意只包含 Windows 与 Apple Silicon。
+  # Intel 构建机(macos-13)正在被下线且排队时间极长, 一旦放进本工作流,
+  # release 任务就会一直等它, 导致整个版本发不出来。
+  # Intel 包改为手动触发: .github/workflows/build-intel.yml
   # ---------------------------------------------------------------------------
   build:
     name: 打包 ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
-    # 注意: GitHub 正在逐步下线 macos-13(Intel) 镜像。
-    # 这里设为不阻塞, 万一 Intel 镜像不可用, Windows 与 Apple Silicon 仍会正常发布。
-    continue-on-error: ${{ matrix.optional == true }}
     strategy:
       fail-fast: false
       matrix:
@@ -31,10 +33,6 @@ jobs:
           - name: macOS-ARM64
             os: macos-14          # Apple Silicon (M 系列)
             kind: macos
-          - name: macOS-Intel
-            os: macos-13          # Intel (可选, 镜像下线后自动跳过)
-            kind: macos
-            optional: true
 
     steps:
       - name: 检出代码
@@ -188,7 +186,8 @@ jobs:
               mac_found="yes"
               echo "OK  macOS-${arch} 包已生成"
             else
-              echo "-- macOS-${arch} 产物缺失, 跳过(Intel 镜像可能已下线)"
+              # Intel 由手动工作流产出, 本流程不含它
+              echo "-- 本次没有 macOS-${arch} 产物(Intel 需手动触发 build-intel.yml)"
             fi
           done
 
