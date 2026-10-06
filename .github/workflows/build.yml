@@ -242,7 +242,8 @@ jobs:
       - name: 发布到 Release
         uses: softprops/action-gh-release@v2
         with:
-          name: WebPForge v${{ github.ref_name }}
+          # github.ref_name 已经带 v 前缀(如 v1.0.0), 不要再加 v
+          name: WebPForge ${{ github.ref_name }}
           body_path: RELEASE_BODY.md
           files: out/*.zip
           draft: false
