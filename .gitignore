@@ -44,6 +44,7 @@ assets/icon.iconset/
 coverage.xml
 htmlcov/
 
-
-# ---- 提交信息临时文件 ----
-_msg.txt
+# ---- 临时文件(提交信息等) ----
+/_msg.txt
+/_c.txt
+/_.txt
