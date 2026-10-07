@@ -1,3 +1,0 @@
-﻿fix(ci): Release 名称重复 v 前缀 (WebPForge vv1.0.0 -> WebPForge v1.0.0)
-
-github.ref_name 本身已包含 v 前缀, 之前又多拼了一个 v。
