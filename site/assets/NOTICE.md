@@ -19,7 +19,7 @@ the static Pillow example because the encoders and settings differ.
 ## Fonts
 
 - Manrope, by Mikhail Sharanda and the Manrope Project Authors. SIL Open Font License 1.1; see `manrope-OFL.txt`.
-- Noto Sans SC, by the Noto Project Authors. SIL Open Font License 1.1; see `notosanssc-OFL.txt`. Only the heading characters are included in the webfont subset.
+- Noto Sans SC, by the Noto Project Authors. SIL Open Font License 1.1; see `notosanssc-OFL.txt`. The subset includes Chinese headings, body copy and runtime installation/status text; Latin uses Manrope.
 
 Font sources: https://github.com/google/fonts/tree/main/ofl/manrope and
 https://github.com/google/fonts/tree/main/ofl/notosanssc.

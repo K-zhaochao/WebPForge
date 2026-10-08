@@ -1,15 +1,6 @@
 name: Build macOS Intel (manual)
 
-# Intel 版手动构建。
-#
-# 为什么不放进自动发布流程:
-#   GitHub 的 Intel 构建机(macos-13)正在被下线, 排队时间经常超过 30 分钟,
-#   有时干脆分配不到机器。如果把它放进 Build & Release, release 任务会一直
-#   等它, 整个版本都发不出去。
-#
-# 所以拆成独立工作流: 需要 Intel 包时, 在 Actions 页面点
-#   "Build macOS Intel (manual)" -> Run workflow
-# 构建完成后从该次运行的 Artifacts 里下载 WebPForge-macOS-Intel.zip。
+# Standalone fallback build. Tagged releases include Intel automatically.
 on:
   workflow_dispatch:
 
@@ -19,7 +10,7 @@ permissions:
 jobs:
   build-intel:
     name: 打包 macOS-Intel
-    runs-on: macos-13
+    runs-on: macos-15-intel
     timeout-minutes: 45      # 排队超过 45 分钟直接放弃, 不无限占用
 
     steps:

@@ -11,7 +11,7 @@
 
 [中文](README.md) · **English**
 
-[**Official website & live WebP demo (Chinese)**](https://k-zhaochao.github.io/WebPForge/)
+[**Official website & live WebP demo (Chinese)**](https://webp.royi.net/)
 
 Drop in a pile of JPG / PNG / BMP / GIF / TIFF files, hit **Start**, and get smaller WebP images.
 
@@ -21,8 +21,9 @@ Drop in a pile of JPG / PNG / BMP / GIF / TIFF files, hit **Start**, and get sma
 
 ## Download
 
-The [official website](https://k-zhaochao.github.io/WebPForge/) provides release downloads and a working browser demo.
+The [official website](https://webp.royi.net/) provides release downloads and a working browser demo.
 The demo converts static JPEG, PNG and WebP images locally, with a quality slider, visual comparison and downloadable output.
+Install the PWA on Android through the browser menu, or on iOS through Safari → Share → Add to Home Screen. This is an installable web app, not an APK or App Store native app. Offline conversion works after the initial cache finishes.
 Images are never uploaded. For batches, animation and lossless encoding, use the desktop application.
 Website development and GitHub Pages deployment are documented in [docs/website.md](docs/website.md).
 
@@ -32,14 +33,9 @@ Grab the archive for your system from [**Releases**](https://github.com/K-zhaoch
 |---|---|
 | Windows 10/11 (x64) | `WebPForge-<version>-Windows-x64.zip` → run `WebPForge.exe` |
 | macOS (Apple Silicon / M-series) | `WebPForge-<version>-macOS-ARM64.zip` → run `WebPForge.app` |
-| macOS (Intel) | see the note below ↓ |
+| macOS (Intel) | `WebPForge-<version>-macOS-Intel.zip` → run `WebPForge.app` |
 
-> **Intel Mac users**: GitHub's Intel runner image (`macos-13`) is being retired and its queue
-> times are extreme, so the Intel build is **triggered manually** — bundling it into the release
-> pipeline would stall every release.
-> Go to [Actions → Build macOS Intel (manual)](https://github.com/K-zhaochao/WebPForge/actions/workflows/build-intel.yml),
-> click **Run workflow**, then download `WebPForge-macOS-Intel.zip` from that run's Artifacts.
-> Alternatively, just run `./build_macos.sh` on your own Intel Mac.
+> **Intel Mac users**: v1.1.0 and newer releases include a separate Intel package, built automatically.
 
 > The app is **not code-signed**, so the first launch triggers a system warning — this is expected:
 > - **Windows**: SmartScreen → *More info* → *Run anyway*
@@ -257,7 +253,7 @@ WebPForge/
 │   ├── workflows/
 │   │   ├── test.yml             # Windows / Linux regression tests
 │   │   ├── build.yml            # auto build Windows + Apple Silicon, publish Release
-│   │   └── build-intel.yml      # manual Intel build (keeps releases fast)
+│   │   └── build-intel.yml      # standalone Intel build fallback
 │   └── RELEASE_BODY.md          # release notes template
 └── tools/
     ├── make_icon.py             # generate .ico / .icns

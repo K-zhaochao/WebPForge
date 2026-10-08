@@ -1,6 +1,6 @@
 # WebPForge 官网
 
-公开地址：<https://k-zhaochao.github.io/WebPForge/>
+公开地址：<https://webp.royi.net/>
 
 官网以暖白、墨黑、荧光绿为主色，使用大字排版、摄影卡片和可操作的图片对比展示产品。
 首屏的示例数据来自实际文件大小；在线体验则根据当前浏览器生成的 WebP 计算结果。
@@ -55,16 +55,16 @@ python -m http.server 4173 --bind 127.0.0.1 --directory _site
 `.github/workflows/pages.yml`，触发方式为：
 
 1. `main` 上官网、官网测试、构建脚本或部署工作流发生变更；
-2. 发布正式 Release；
+2. 发布正式 Release；GITHUB_TOKEN 创建的 Release 通过 Build & Release 的 workflow_run 完成事件触发官网刷新；
 3. 在 Actions → Deploy official website 手动运行。
 
-构建先运行 7 项图片处理测试，再通过公开 GitHub API 获取最新 Release 的 Windows x64
+构建先运行图片处理、PWA 与部署契约测试，再通过公开 GitHub API 获取最新 Release 的 Windows x64
 与 macOS ARM64 ZIP 及其真实大小。两个安装包齐备后才继续发布。
 因此官网不会指向空安装包，也不需要浏览者每次请求 GitHub API。
 GitHub API 暂时不可用时部署会明确失败，已上线版本保持可用。
 
 构建工作仅有仓库与 Pages 读取权限，部署工作使用 `pages: write` 和 `id-token: write`。
-不需要额外的部署密码或个人令牌。所有资源均使用相对路径，适配 `/WebPForge/` 子目录。
+不需要额外的部署密码或个人令牌。生产地址为 `https://webp.royi.net/`；CNAME、canonical、分享、robots 和 sitemap 均使用此域名。资源与 PWA scope 采用相对路径。
 
 ```bash
 # 在本地模拟部署时的 Release 刷新；不会改动源文件中的快照
@@ -84,7 +84,7 @@ python tools/prepare_site_assets.py          # 更新图片、缩略图和分享
 python tools/prepare_site_assets.py --fonts  # 同时更新开放字体与标题文字子集
 ```
 
-修改中文标题后应重新生成字体子集，否则新增字符会使用系统字体。
+修改中文界面或提示后应重新生成字体子集，覆盖正文、标题与运行时提示。英文和数字优先使用 Manrope；未知文件名用系统字体兜底。
 分享图优先使用 Windows 自带字体进行版式合成；其他系统会生成纯摄影分享图。
 仓库中已提交可直接发布的分享图，CI 不需要重新生成。
 
@@ -101,3 +101,12 @@ python tools/prepare_site_assets.py --fonts  # 同时更新开放字体与标题
 - 检查 320、360、390、540、768、1024、1440 像素视口，没有页面横向溢出。
 
 上述交互验证使用 Chromium 内核的内置浏览器。Safari、Firefox 的真实设备表现需在相应设备上另行验证；不支持编码时已有可见提示。
+
+
+## 手机安装与离线更新
+
+手机采用 PWA，而非原生 APK / IPA。`manifest.webmanifest` 配置独立窗口与图标；`pwa.js` 按设备提供安装指引。iOS 使用 Safari「分享 → 添加到主屏幕」。
+
+`sw.js` 仅缓存公开应用文件，用户图片和结果只存在于内存 Blob URL。首次需联网，成功后显示离线就绪；清理浏览器数据会清除缓存。
+
+缓存版本按渲染页面、脚本、样图、字体和下载信息的内容哈希生成。新 worker 不自动接管正在转换的页面，用户保存结果后点击更新才重载；关闭全部旧窗口也可完成正常更新。维护步骤见 [releases.md](releases.md)。

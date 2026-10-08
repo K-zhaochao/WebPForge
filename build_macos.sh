@@ -19,11 +19,11 @@ ROOT="$(pwd)"
 APP_NAME="WebPForge"
 
 # 版本号: 优先取 git tag(如 v1.2.0 -> 1.2.0), 否则用默认值
-GIT_TAG="$(git describe --tags --abbrev=0 2>/dev/null || true)"
+GIT_TAG="$(git describe --tags --exact-match 2>/dev/null || true)"
 if [ -n "$GIT_TAG" ]; then
     APP_VERSION="${GIT_TAG#v}"
 else
-    APP_VERSION="1.0.0"
+    APP_VERSION="$(python3 -c 'import ast; from pathlib import Path; m=ast.parse(Path("webp_converter.py").read_text()); print(next(n.value.value for n in m.body if isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "APP_VERSION" for t in n.targets)))')"
 fi
 
 echo "=============================================="
@@ -31,10 +31,12 @@ echo " 打包 $APP_NAME v$APP_VERSION (macOS)"
 echo "=============================================="
 
 # ---------- 1. 找 Python ----------
-PY=""
+PY="${WEBPFORGE_PYTHON:-}"
+if [ -z "$PY" ]; then
 for cand in python3.13 python3.12 python3.11 python3.10 python3; do
     if command -v "$cand" >/dev/null 2>&1; then PY="$cand"; break; fi
 done
+fi
 if [ -z "$PY" ]; then
     echo "✗ 没有找到 python3。"
     echo "  请先安装 Python 3.10+ :  https://www.python.org/downloads/macos/"

@@ -1,114 +1,68 @@
 name: Build & Release
 
-# 推送版本 tag (如 v1.0.0) 时自动打包并创建 GitHub Release;
-# 也可以在 Actions 页面手动触发, 只构建不发布。
 on:
   push:
-    tags:
-      - "v*"
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
-  contents: write        # 创建 Release 需要写权限
+  contents: read
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # 1) 自动发布用到的平台, 并行打包(互不影响)
-  #
-  # 注意: 这里刻意只包含 Windows 与 Apple Silicon。
-  # Intel 构建机(macos-13)正在被下线且排队时间极长, 一旦放进本工作流,
-  # release 任务就会一直等它, 导致整个版本发不出来。
-  # Intel 包改为手动触发: .github/workflows/build-intel.yml
-  # ---------------------------------------------------------------------------
   build:
-    name: 打包 ${{ matrix.name }}
+    name: Package ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: Windows-x64
-            os: windows-latest
-            kind: windows
-          - name: macOS-ARM64
-            os: macos-14          # Apple Silicon (M 系列)
-            kind: macos
-
+          - {name: Windows-x64, os: windows-latest, kind: windows}
+          - {name: macOS-ARM64, os: macos-14, kind: macos}
+          - {name: macOS-Intel, os: macos-15-intel, kind: macos}
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      - name: 准备 Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-
-      - name: 安装 tkinter (仅 macOS 需要)
-        if: matrix.kind == 'macos'
-        run: |
-          brew install python-tk@3.12 || brew install python-tk || true
-          python3 -c "import tkinter; print('tkinter OK', tkinter.TkVersion)"
-
-      - name: 安装依赖
+          python-version: '3.12'
+      - name: Validate release version
+        if: startsWith(github.ref, 'refs/tags/v')
         shell: bash
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install pillow pyinstaller
-
-      # ---------- Windows ----------
-      - name: 打包 (Windows)
+          python -c "import os,webp_converter; assert os.environ['GITHUB_REF_NAME'] == 'v'+webp_converter.APP_VERSION"
+      - name: Install dependencies
+        run: python -m pip install pillow pyinstaller
+      - name: Package Windows
         if: matrix.kind == 'windows'
         shell: pwsh
         run: .\build_windows.ps1 -SkipZip
-
-      - name: 验证 Windows 可执行文件
+      - name: Verify Windows executable
         if: matrix.kind == 'windows'
         run: python -X utf8 tools/test_packaged.py dist/WebPForge.exe
-
-      - name: 上传 Windows 产物
+      - name: Upload Windows executable
         if: matrix.kind == 'windows'
         uses: actions/upload-artifact@v4
         with:
           name: WebPForge-${{ matrix.name }}
-          # 注意: 只上传文件, 目录结构会被保留。若上传 dist/ 目录,
-          # 下载后会多一层 dist/, 打包脚本已用 find 搜索, 两种布局都能处理。
           path: |
             dist/WebPForge.exe
             README.md
             README.en.md
             LICENSE
           if-no-files-found: error
-
-      # ---------- macOS ----------
-      - name: 打包 (macOS)
+      - name: Package macOS
         if: matrix.kind == 'macos'
         shell: bash
+        env:
+          WEBPFORGE_PYTHON: python
         run: |
-          chmod +x build_macos.sh
-          ./build_macos.sh
-
-      - name: 校验 .app 结构
-        if: matrix.kind == 'macos'
-        shell: bash
-        run: |
-          test -x "dist/WebPForge.app/Contents/MacOS/WebPForge" \
-            || { echo "!! .app 结构不完整"; exit 1; }
-          echo "ok: dist/WebPForge.app"
-
-      - name: 打成 zip (保留 .app 结构)
-        if: matrix.kind == 'macos'
-        shell: bash
-        run: |
-          set -euo pipefail
+          python -c "import tkinter; print(tkinter.TkVersion)"
+          bash build_macos.sh
+          test -x dist/WebPForge.app/Contents/MacOS/WebPForge
+          lipo -archs dist/WebPForge.app/Contents/MacOS/WebPForge
           mkdir -p dist-artifact
-          # 关键: 必须先压缩再上传。
-          # .app 本质是目录, 直接上传会被当成普通文件夹展开,
-          # 下载后只剩 Contents/, 外层 WebPForge.app 会丢失。
-          ditto -c -k --sequesterRsrc --keepParent \
-            dist/WebPForge.app dist-artifact/WebPForge.app.zip
-          ls -lh dist-artifact/
-
-      - name: 上传 macOS 产物
+          ditto -c -k --sequesterRsrc --keepParent dist/WebPForge.app dist-artifact/WebPForge.app.zip
+      - name: Upload macOS application
         if: matrix.kind == 'macos'
         uses: actions/upload-artifact@v4
         with:
@@ -120,138 +74,46 @@ jobs:
             LICENSE
           if-no-files-found: error
 
-  # ---------------------------------------------------------------------------
-  # 2) 下载全部产物 -> 打成可双击的压缩包 -> 创建 Release
-  # ---------------------------------------------------------------------------
   release:
-    name: 创建 Release
     needs: build
-    # tag 推送时才会真正发布; 手动触发只做构建与打包演练(不产生 Release),
-    # 方便在不污染 Releases 的前提下验证发布流程。
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: write
     steps:
-      - name: 检出代码
-        uses: actions/checkout@v4
-
-      # 打印令牌权限供排查, 但不再据此中止流程。
-      # 原因: GITHUB_TOKEN 自报的 permissions 反映的是"签发那一刻"的仓库设置,
-      # GitHub 对该设置的传播有延迟, 用它做硬性门禁会误判。
-      # 真正的判断交给下面的"发布到 Release"步骤 —— 它成功与否才是权威结果。
-      - name: 记录令牌权限(仅供参考)
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -uo pipefail
-          perms=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}" \
-            | grep -o '"permissions":{[^}]*}' || true)
-          echo "令牌自报权限: ${perms:-未知}"
-          echo "提示: 若此处显示 push:false 但 Release 仍创建成功, 说明只是该字段滞后。"
-
-      - name: 汇总所有平台的产物
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      # GitHub 的 ubuntu 镜像不保证预装 zip。之前打包步骤就是因为
-      # "zip: command not found" 而失败的, 这里显式装上。
-      # macOS 的 .app 必须用 zip(而非 Python 的 zipfile)打包, 否则会丢符号链接与执行权限。
-      - name: 准备打包工具
-        shell: bash
+      - name: Test website and deployment contract
         run: |
-          set -uo pipefail
-          # zip 有时不预装; unzip 是备用解压方案(脚本优先用 Python 标准库)
-          need=""
-          command -v zip    >/dev/null 2>&1 || need="$need zip"
-          command -v unzip  >/dev/null 2>&1 || need="$need unzip"
-          if [ -n "$need" ]; then
-            echo "缺少:$need —— 正在安装..."
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq $need
-          fi
-          command -v zip >/dev/null 2>&1 || { echo "!! zip 不可用"; exit 1; }
-          echo "zip  : $(command -v zip)"
-          echo "unzip: $(command -v unzip || echo '无(将使用 Python 标准库解压)')"
-          echo "python3: $(command -v python3 || echo 无)"
-
-      - name: 列出收到的产物
-        shell: bash
-        run: |
-          echo "=== artifacts 目录树 ==="
-          find artifacts -maxdepth 3 | sort
-          echo ""
-          echo "=== 关键文件核对 ==="
-          ls -la artifacts/WebPForge-Windows-x64/ || true
-          ls -la artifacts/WebPForge-macOS-ARM64/ || true
-
-      - name: 打包成发布资源
-        shell: bash
-        run: |
-          set -uo pipefail
-          chmod +x tools/package_release.sh
-
-          {
-            echo "### 发布打包日志"
-            echo ""
-            echo '```'
-            echo "zip  : $(command -v zip || echo 未找到)"
-            echo "版本 : ${GITHUB_REF_NAME}"
-            echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          # 输出同时进 stdout 与 Job Summary —— Summary 无需登录即可查看, 便于排错
-          set +e
-          bash tools/package_release.sh artifacts out "${GITHUB_REF_NAME#v}" 2>&1 | tee /tmp/pkg.log
-          rc=${PIPESTATUS[0]}
-          set -e
-
-          {
-            cat /tmp/pkg.log
-            echo '```'
-            echo ""
-            echo "退出码: \`$rc\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [ "$rc" -ne 0 ]; then
-            # 把日志末尾放进 error 注解 —— 注解会渲染在运行页面上,
-            # 即使不登录也能看到失败原因, 省去翻日志的麻烦。
-            hint="$(tail -c 600 /tmp/pkg.log | tr '\n' ' ' | sed 's/%/%25/g; s/\r//g')"
-            echo "::error::打包失败(退出码 $rc)。末尾日志: ${hint}"
-            exit "$rc"
-          fi
-          echo "打包成功"
-
-      - name: 生成 Release 说明
+          node --test tests/site-*.test.mjs
+          python -m unittest discover -s tests -p test_site.py -v
+      - name: Package release assets
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#v}"
-
-          # 版本号与下载链接按本次 tag 动态替换, 模板见 .github/RELEASE_BODY.md
-          sed -e "s|^## WebPForge$|## WebPForge v${VERSION}|" \
-              -e "s|WebPForge-Windows-x64\.zip|WebPForge-${VERSION}-Windows-x64.zip|g" \
-              -e "s|WebPForge-macOS-ARM64\.zip|WebPForge-${VERSION}-macOS-ARM64.zip|g" \
-              -e "s|WebPForge-macOS-Intel\.zip|WebPForge-${VERSION}-macOS-Intel.zip|g" \
-              -e "s|OWNER/REPO|${GITHUB_REPOSITORY}|g" \
-              .github/RELEASE_BODY.md > RELEASE_BODY.md
-
-          echo "=== Release 说明预览 ==="
-          head -20 RELEASE_BODY.md
-
-      - name: 发布到 Release
+          command -v zip || (sudo apt-get update -qq && sudo apt-get install -y zip)
+          bash tools/package_release.sh artifacts out "${GITHUB_REF_NAME#v}"
+          test -f "out/WebPForge-${GITHUB_REF_NAME#v}-macOS-Intel.zip"
+          python tools/package_web.py out "$GITHUB_REF_NAME"
+          sed -e "s|@@TAG@@|${GITHUB_REF_NAME}|g" -e "s|@@VERSION@@|${GITHUB_REF_NAME#v}|g" .github/RELEASE_BODY.md > RELEASE_BODY.md
+      - name: Publish complete release
         uses: softprops/action-gh-release@v2
         with:
-          # github.ref_name 已经带 v 前缀(如 v1.0.0), 不要再加 v
           name: WebPForge ${{ github.ref_name }}
           body_path: RELEASE_BODY.md
-          files: out/*.zip
+          files: |
+            out/*.zip
+            out/SHA256SUMS.txt
+            out/release-manifest.json
+          fail_on_unmatched_files: true
           draft: false
           prerelease: false
           generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

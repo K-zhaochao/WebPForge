@@ -25,9 +25,11 @@ PHOTOS = (
 def prepare_fonts():
     """Self-host open fonts; this optional development step never runs on Pages."""
     html = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
-    headings = "".join(re.findall(r"<h[123][^>]*>(.*?)</h[123]>", html, re.S))
-    characters = "".join(sorted(set(re.sub(r"<[^>]*>", "", headings))))
-    characters = "".join(char for char in characters if ord(char) > 127)
+    # Include Chinese body copy, installation help and runtime status/error text.
+    # One family across the UI avoids platform-dependent mixed Chinese typography.
+    texts = html + "".join(path.read_text(encoding="utf-8") for path in (ROOT / "site").glob("*.js"))
+    characters = "".join(sorted({char for char in texts if
+        0x2000 <= ord(char) <= 0x206F or 0x2E80 <= ord(char) <= 0x9FFF or 0xFF00 <= ord(char) <= 0xFFEF}))
     sources = (
         ("manrope-latin.woff2", "Manrope:wght@200..800", "", "manrope"),
         ("heading-sc.woff2", "Noto+Sans+SC:wght@400..900", characters, "notosanssc"),

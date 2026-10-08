@@ -2,8 +2,8 @@
 # PyInstaller Windows 版本资源: 让 exe 在"属性 → 详细信息"里显示名称/版本/版权
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 0, 0),
-    prodvers=(1, 0, 0, 0),
+    filevers=(1, 1, 0, 0),
+    prodvers=(1, 1, 0, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -19,12 +19,12 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'WebPForge'),
             StringStruct('FileDescription', 'WebPForge 批量图片转 WebP 工具'),
-            StringStruct('FileVersion', '1.0.0'),
+            StringStruct('FileVersion', '1.1.0'),
             StringStruct('InternalName', 'WebPForge'),
             StringStruct('LegalCopyright', 'MIT License'),
             StringStruct('OriginalFilename', 'WebPForge.exe'),
             StringStruct('ProductName', 'WebPForge'),
-            StringStruct('ProductVersion', '1.0.0')
+            StringStruct('ProductVersion', '1.1.0')
           ]
         )
       ]

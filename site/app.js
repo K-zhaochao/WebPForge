@@ -7,6 +7,7 @@ import {
   getSavings,
   outputFilename,
 } from "./image-codec.js";
+import "./pwa.js";
 
 document.documentElement.classList.add("js");
 const $ = (selector) => document.querySelector(selector);

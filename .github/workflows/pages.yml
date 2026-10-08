@@ -6,10 +6,14 @@ on:
     paths:
       - 'site/**'
       - 'tools/build_site.py'
-      - 'tests/site-image.test.mjs'
+      - 'tests/site-*.test.mjs'
+      - 'tests/test_site.py'
       - '.github/workflows/pages.yml'
   release:
     types: [published]
+  workflow_run:
+    workflows: ["Build & Release"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -21,6 +25,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -36,7 +41,9 @@ jobs:
         with:
           node-version: '22'
       - name: Validate image handling
-        run: node --test tests/site-image.test.mjs
+        run: node --test tests/site-*.test.mjs
+      - name: Validate site deployment contract
+        run: python -m unittest discover -s tests -p test_site.py -v
       - name: Build and validate site
         run: python tools/build_site.py --refresh-release
         env:

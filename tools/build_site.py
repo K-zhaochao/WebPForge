@@ -8,6 +8,7 @@ release. Local builds use the checked-in release.json and need no network.
 """
 
 import argparse
+import hashlib
 from html import escape
 from html.parser import HTMLParser
 import json
@@ -21,8 +22,17 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "site"
 OUTPUT = ROOT / "_site"
-SITE_URL = "https://k-zhaochao.github.io/WebPForge/"
+SITE_URL = "https://webp.royi.net/"
 REPOSITORY = "K-zhaochao/WebPForge"
+
+
+def is_within(path, parent):
+    """Path containment compatible with the desktop's Python 3.8 test matrix."""
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
 
 
 class References(HTMLParser):
@@ -64,6 +74,11 @@ def refresh_release():
             raise ValueError(f"Latest release has no unambiguous {platform} package")
         asset = matches[0]
         result[platform] = {"url": asset["browser_download_url"], "bytes": asset["size"]}
+    for platform, suffix in (("intel", "-macOS-Intel.zip"), ("web", "-Web.zip")):
+        matches = [asset for asset in assets if asset["name"].endswith(suffix)]
+        if len(matches) == 1:
+            asset = matches[0]
+            result[platform] = {"url": asset["browser_download_url"], "bytes": asset["size"]}
     return result
 
 
@@ -71,11 +86,22 @@ def validate_release(release):
     prefix = f"https://github.com/{REPOSITORY}/releases/"
     if not release["url"].startswith(prefix + "tag/"):
         raise ValueError("Unexpected release URL")
-    for platform in ("windows", "macos"):
+    for platform in ("windows", "macos", *(key for key in ("intel", "web") if key in release)):
         if not release[platform]["url"].startswith(prefix + "download/"):
             raise ValueError(f"Unexpected {platform} asset URL")
         if not isinstance(release[platform]["bytes"], int) or release[platform]["bytes"] <= 0:
             raise ValueError(f"Invalid {platform} asset size")
+
+
+def release_from_directory(directory, tag):
+    if not re.fullmatch(r"v\d+\.\d+\.\d+", tag or ""):
+        raise ValueError("A stable vX.Y.Z release tag is required")
+    release = {"tag": tag, "url": f"https://github.com/{REPOSITORY}/releases/tag/{tag}"}
+    for platform, suffix in (("windows", "Windows-x64"), ("macos", "macOS-ARM64"), ("intel", "macOS-Intel")):
+        asset = Path(directory) / f"WebPForge-{tag[1:]}-{suffix}.zip"
+        release[platform] = {"url": f"https://github.com/{REPOSITORY}/releases/download/{tag}/{asset.name}",
+                             "bytes": asset.stat().st_size}
+    return release
 
 
 def validate_site(html):
@@ -100,17 +126,17 @@ def validate_site(html):
             references.errors.append(f"Root-relative link breaks project Pages: {reference}")
             continue
         target = (SOURCE / urllib.parse.unquote(parsed.path)).resolve()
-        if not target.is_relative_to(SOURCE.resolve()) or not target.is_file():
+        if not is_within(target, SOURCE.resolve()) or not target.is_file():
             references.errors.append(f"Missing or unsafe local reference: {reference}")
     for sample in json.loads((SOURCE / "assets" / "samples.json").read_text(encoding="utf-8")):
         for field, size_field in (("source", "sourceBytes"), ("preview", "outputBytes")):
             target = (SOURCE / sample[field]).resolve()
-            if not target.is_relative_to(SOURCE.resolve()) or not target.is_file():
+            if not is_within(target, SOURCE.resolve()) or not target.is_file():
                 references.errors.append(f"Missing or unsafe sample: {sample[field]}")
             elif target.stat().st_size != sample[size_field]:
                 references.errors.append(f"Sample size has drifted: {sample[field]}")
         thumbnail = (SOURCE / sample["thumbnail"]).resolve()
-        if not thumbnail.is_relative_to(SOURCE.resolve()) or not thumbnail.is_file():
+        if not is_within(thumbnail, SOURCE.resolve()) or not thumbnail.is_file():
             references.errors.append(f"Missing sample thumbnail: {sample['thumbnail']}")
     if "@@" in html:
         references.errors.append("Unresolved template tokens")
@@ -122,8 +148,14 @@ def validate_site(html):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--refresh-release", action="store_true")
+    parser.add_argument("--release-dir", help="Build from locally packaged release assets")
+    parser.add_argument("--release-tag")
     args = parser.parse_args()
-    release = refresh_release() if args.refresh_release else json.loads((SOURCE / "release.json").read_text(encoding="utf-8"))
+    if args.refresh_release and args.release_dir:
+        parser.error("Choose one release source")
+    release = (release_from_directory(args.release_dir, args.release_tag) if args.release_dir
+               else refresh_release() if args.refresh_release
+               else json.loads((SOURCE / "release.json").read_text(encoding="utf-8")))
     validate_release(release)
     values = {
         "SITE_URL": SITE_URL,
@@ -133,6 +165,9 @@ def main():
         "MACOS_URL": release["macos"]["url"],
         "WINDOWS_SIZE": f"{release['windows']['bytes'] / 1_000_000:.1f} MB",
         "MACOS_SIZE": f"{release['macos']['bytes'] / 1_000_000:.1f} MB",
+        "INTEL_URL": release.get("intel", {}).get("url", release["url"]),
+        "INTEL_LABEL": "下载 Intel 版" if "intel" in release else "查看 Intel 版本",
+        "WEB_URL": release.get("web", {}).get("url", release["url"]),
     }
     html = (SOURCE / "index.html").read_text(encoding="utf-8")
     for key, value in values.items():
@@ -142,19 +177,37 @@ def main():
     # Only this exact build directory may be replaced; refuse symlinks or paths
     # outside the repository before any recursive deletion, including on Windows.
     expected = ROOT.resolve() / "_site"
-    if OUTPUT.is_symlink() or OUTPUT.resolve() != expected or not expected.is_relative_to(ROOT.resolve()):
+    if OUTPUT.is_symlink() or OUTPUT.resolve() != expected or not is_within(expected, ROOT.resolve()):
         raise ValueError("Unsafe build directory")
     if OUTPUT.exists():
         shutil.rmtree(OUTPUT)
     shutil.copytree(SOURCE, OUTPUT, ignore=shutil.ignore_patterns("package.json"))
     (OUTPUT / "index.html").write_text(html, encoding="utf-8")
     (OUTPUT / "release.json").write_text(json.dumps(release, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (OUTPUT / "CNAME").write_text(urllib.parse.urlsplit(SITE_URL).hostname + "\n", encoding="utf-8")
     (OUTPUT / "robots.txt").write_text(f"User-agent: *\nAllow: /\nSitemap: {SITE_URL}sitemap.xml\n", encoding="utf-8")
     (OUTPUT / "sitemap.xml").write_text(
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
         f'  <url><loc>{SITE_URL}</loc></url>\n</urlset>\n', encoding="utf-8",
     )
+    manifest = json.loads((OUTPUT / "manifest.webmanifest").read_text(encoding="utf-8"))
+    for icon in manifest["icons"]:
+        if not (OUTPUT / icon["src"]).is_file():
+            raise ValueError(f"Missing PWA icon: {icon['src']}")
+    # Hash the complete rendered application, including release URLs and fonts.
+    # A deployment changes the cache version even if the software tag is unchanged.
+    files = sorted(path for path in OUTPUT.rglob("*") if path.is_file() and path.name != "sw.js")
+    digest = hashlib.sha256()
+    for path in files:
+        digest.update(path.relative_to(OUTPUT).as_posix().encode())
+        digest.update(path.read_bytes())
+    urls = ["./"] + ["./" + path.relative_to(OUTPUT).as_posix() for path in files
+                       if path.suffix not in (".md", ".txt") and path.name != "CNAME"]
+    worker = (OUTPUT / "sw.js").read_text(encoding="utf-8")
+    worker = worker.replace("@@CACHE_VERSION@@", digest.hexdigest()[:16])
+    worker = worker.replace("@@PRECACHE_URLS@@", json.dumps(urls, ensure_ascii=False))
+    (OUTPUT / "sw.js").write_text(worker, encoding="utf-8")
     print(f"Built {OUTPUT.name}: {reference_count} references checked; release {release['tag']}.")
 
 

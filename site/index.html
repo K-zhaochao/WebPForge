@@ -7,7 +7,7 @@
     <title>WebPForge — 好画质，轻装上阵。</title>
     <meta
       name="description"
-      content="把图片的体积减下来，把值得的细节留下来。WebPForge 是免费开源的离线图片转换工具，支持 Windows 与 macOS。也可以直接在浏览器里体验 WebP 转换。"
+      content="直接在线把 JPG、PNG 转为 WebP，图片不上传。WebPForge 免费开源，支持手机安装为离线应用，以及 Windows、macOS 桌面版下载。"
     />
     <link rel="canonical" href="@@SITE_URL@@" />
     <meta property="og:type" content="website" />
@@ -24,6 +24,10 @@
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="icon" href="assets/favicon.png" type="image/png" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="assets/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="WebPForge" />
     <link
       rel="preload"
       href="assets/manrope-latin.woff2"
@@ -114,7 +118,7 @@
         </button>
         <nav class="primary-nav" id="primary-nav" aria-label="主要导航">
           <a href="#features">为什么选它</a>
-          <a href="#playground">在线体验</a>
+          <a href="#playground">在线转换</a>
           <a href="#faq">常见问题</a>
           <a
             class="nav-github"
@@ -156,17 +160,16 @@
             把图片的体积减下来，<br />把值得的细节留下来。
           </p>
           <p class="hero-detail">
-            一个简单、顺手的离线图片转换工具。<br />从一张照片到整个文件夹，轻松转换为
-            WebP。
+            打开网页，就能把图片转为 WebP。<br />图片留在你的设备，也能安装到手机或下载桌面版。
           </p>
           <div class="hero-actions">
-            <a class="button button-dark" href="#download"
-              >免费下载<svg aria-hidden="true" class="icon">
+            <a class="button button-dark" href="#playground"
+              >开始在线转换<svg aria-hidden="true" class="icon">
                 <use href="#i-arrow" /></svg
             ></a>
-            <a class="button button-outline" href="#playground"
-              ><svg aria-hidden="true" class="icon"><use href="#i-play" /></svg
-              >亲手试试</a
+            <a class="button button-outline" href="#download"
+              ><svg aria-hidden="true" class="icon"><use href="#i-download" /></svg
+              >下载 / 安装应用</a
             >
           </div>
           <p class="hero-platforms">
@@ -174,7 +177,7 @@
             ><span>Windows</span><span class="platform-plus">+</span
             ><span class="command-symbol" aria-hidden="true">⌘</span
             ><span>macOS</span><span class="platform-divider"></span
-            ><span>双击即用</span>
+            ><span>Android / iOS · 可安装</span>
           </p>
         </div>
         <div
@@ -492,7 +495,7 @@
             <div class="lab-bottomline">
               <span><span class="local-dot"></span>本地处理 · 不上传图片</span>
               <p>
-                在线体验支持静态 JPG / PNG / WebP，单张不超过 20 MB、1,600
+                在线转换支持静态 JPG / PNG / WebP，单张不超过 20 MB、1,600
                 万像素。动画与批量转换，请使用桌面版。
               </p>
             </div>
@@ -625,8 +628,7 @@
             <p class="eyebrow"><span>03 /</span> READY WHEN YOU ARE.</p>
             <h2 id="download-title">下一张图片，<br />轻一点出发。</h2>
             <p>
-              给硬盘松绑，也给网站提速。<br />下载
-              WebPForge，把轻盈带回你的桌面。
+              随时在线用，也能带走用。<br />手机安装轻应用，电脑下载离线桌面版。
             </p>
             <div class="download-trust">
               <span
@@ -645,8 +647,20 @@
             </div>
           </div>
           <div class="download-options">
+            <p class="device-recommendation" id="device-recommendation">在线版适用于手机和电脑；桌面版按系统选择。</p>
+            <div class="platform-card platform-app">
+              <div class="platform-card-top"><span class="release-tag mono">INSTALL THE WEB APP</span><span class="app-badge">PWA</span></div>
+              <h3>随身的 WebPForge</h3>
+              <p>Android / iPhone / iPad · 添加到主屏幕，无需应用商店</p>
+              <div class="app-install-actions">
+                <button class="button button-dark" type="button" id="install-app">安装到手机 / 电脑</button>
+                <a class="text-link" href="#playground">继续在线使用 →</a>
+              </div>
+              <p class="offline-status" id="offline-status" role="status">首次打开需联网，资源缓存完成后可离线转换。</p>
+            </div>
             <a
               class="platform-card platform-windows"
+              data-platform="windows"
               href="@@WINDOWS_URL@@"
               aria-label="下载 WebPForge @@RELEASE_TAG@@ Windows x64 版，ZIP @@WINDOWS_SIZE@@"
               ><div class="platform-card-top">
@@ -668,6 +682,7 @@
             ></a>
             <a
               class="platform-card platform-mac"
+              data-platform="macos"
               href="@@MACOS_URL@@"
               aria-label="下载 WebPForge @@RELEASE_TAG@@ macOS Apple Silicon 版，ZIP @@MACOS_SIZE@@"
               ><div class="platform-card-top">
@@ -688,10 +703,10 @@
             ></a>
             <p class="download-other">
               使用 Intel Mac？<a
-                href="https://github.com/K-zhaochao/WebPForge#下载"
+                href="@@INTEL_URL@@"
                 target="_blank"
                 rel="noopener noreferrer"
-                >查看构建说明<svg aria-hidden="true" class="icon">
+                >@@INTEL_LABEL@@<svg aria-hidden="true" class="icon">
                   <use href="#i-up-right" /></svg></a
               ><span>·</span
               ><a
@@ -726,6 +741,10 @@
             ></a>
           </div>
           <div class="faq-list">
+            <details>
+              <summary>手机安装的是 APK / App Store 原生版吗？<svg aria-hidden="true" class="icon"><use href="#i-plus" /></svg></summary>
+              <p>目前是可安装的网页应用（PWA），不是 APK 或 App Store 原生应用。Android 在浏览器菜单中安装；iPhone / iPad 用 Safari 的「分享 → 添加到主屏幕」。安装后有独立图标和窗口，资源缓存完成后可离线转换，功能与在线版一致。批量、无损和动画转换请使用桌面版。</p>
+            </details>
             <details open>
               <summary>
                 我的图片会被上传吗？<svg aria-hidden="true" class="icon">
@@ -734,7 +753,7 @@
               </summary>
               <div class="faq-answer">
                 <p>
-                  不会。桌面版完全离线；本页的在线体验也只使用浏览器在你的设备上处理图片，没有图片上传服务。关闭页面后，体验区中的图片和转换结果不会被网站保存。
+                  不会。桌面版完全离线；在线版和手机轻应用也只在你的设备上处理图片。离线缓存只保存网页和公开示例，不保存你选择的图片或转换结果。关闭或更新应用前请下载结果。
                 </p>
               </div>
             </details>
@@ -869,5 +888,17 @@
         </div>
       </div>
     </footer>
+    <dialog id="install-dialog" class="install-dialog" aria-labelledby="install-title">
+      <form method="dialog"><button class="dialog-close" aria-label="关闭安装说明">×</button></form>
+      <p class="eyebrow">YOUR POCKET CONVERTER</p>
+      <h2 id="install-title">把轻盈，带在身边。</h2>
+      <p id="install-instructions">在浏览器菜单中选择「安装应用」或「添加到主屏幕」。</p>
+      <p class="install-note">这是 PWA 轻应用，不是 APK / App Store 原生版。首次缓存完成后可离线用；清理浏览器数据会清除离线资源。关闭应用前请保存转换结果。</p>
+      <form method="dialog"><button class="button button-dark">知道了，继续使用</button></form>
+    </dialog>
+    <aside class="update-notice" id="app-update" hidden aria-label="应用更新">
+      <span>新版已准备好。请先下载当前结果，更新会重载页面。</span>
+      <button type="button" id="update-app">保存后更新</button>
+    </aside>
   </body>
 </html>

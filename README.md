@@ -11,7 +11,7 @@
 
 **中文** · [English](README.en.md)
 
-[**访问官网 · 在线体验 WebP 转换**](https://k-zhaochao.github.io/WebPForge/)
+[**访问官网 · 直接在线转换 / 安装手机轻应用**](https://webp.royi.net/)
 
 把一堆 JPG / PNG / BMP / GIF / TIFF 拖进去，点一下「开始转换」，就全部变成体积更小的 WebP。
 
@@ -27,13 +27,9 @@
 |---|---|
 | Windows 10/11 (x64) | `WebPForge-<版本>-Windows-x64.zip` → 双击 `WebPForge.exe` |
 | macOS（Apple Silicon / M 系列） | `WebPForge-<版本>-macOS-ARM64.zip` → 双击 `WebPForge.app` |
-| macOS（Intel） | 见下方说明 ↓ |
+| macOS（Intel） | `WebPForge-<版本>-macOS-Intel.zip` → 双击 `WebPForge.app` |
 
-> **Intel Mac 用户**：GitHub 的 Intel 构建机（`macos-13`）正在被下线，排队时间极长，
-> 因此 Intel 包改为**手动触发构建**，放在 Release 里会拖垮整个发布流程。
-> 需要 Intel 版时，到 [Actions → Build macOS Intel (manual)](https://github.com/K-zhaochao/WebPForge/actions/workflows/build-intel.yml)
-> 点 **Run workflow**，构建完成后在该次运行的 Artifacts 里下载 `WebPForge-macOS-Intel.zip`。
-> 或者直接在 Intel Mac 上执行 `./build_macos.sh` 自行打包。
+> **Intel Mac 用户**：v1.1.0 起正式 Release 自动包含 Intel 包，与 Apple Silicon 分开下载。
 
 > 程序未做代码签名，首次运行会有系统提示，属正常现象：
 > - **Windows**：SmartScreen 提示 →「更多信息」→「仍要运行」
@@ -43,9 +39,10 @@
 
 ## 官网与在线体验
 
-官网：[**k-zhaochao.github.io/WebPForge**](https://k-zhaochao.github.io/WebPForge/)
+官网：[**webp.royi.net**](https://webp.royi.net/)
 
-- 提供 Windows / macOS 正式版下载、产品介绍和常见问题。
+- 默认直接在线使用；按系统下载 Windows x64、macOS Apple Silicon / Intel 版。
+- 手机支持 PWA 轻应用（不是 APK / App Store 原生应用）。Android 用浏览器安装，iOS 用 Safari「分享 → 添加到主屏幕」，缓存完成后支持离线转换。
 - 在线体验使用浏览器在本机实际编码 WebP，支持画质调整、原图对比、替换图片与下载结果。
 - 不上传用户图片，不使用分析服务；样图和字体均由官网自身托管。
 - 浏览器体验仅处理静态 JPG / PNG / WebP，单张最大 20 MB、1,600 万像素、单边 8,192 像素。批量、动画与无损转换请使用桌面版。
@@ -242,18 +239,17 @@ pyinstaller --clean --noconfirm build.spec
 
 ## 发布新版本
 
-推送一个版本 tag，GitHub Actions 会自动构建 Windows 与 Apple Silicon 两个平台并创建 Release：
+推送一个版本 tag，GitHub Actions 会自动构建 Windows x64、macOS ARM64 / Intel 与网页包并创建 Release：
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag -a v1.2.0 -m "WebPForge v1.2.0"
+git push origin main
+git push origin v1.2.0
 ```
 
 流程见 [`.github/workflows/build.yml`](.github/workflows/build.yml)：Windows 与 Apple Silicon 并行打包 → 汇总为可双击的 zip → 创建 Release 并附上安装包。
 
-Intel 版由 [`.github/workflows/build-intel.yml`](.github/workflows/build-intel.yml) 手动触发构建，
-**故意不放进自动发布流程**——GitHub 的 Intel 构建机排队时间经常超过 30 分钟，
-把它挂进 `release` 的依赖会让整个版本发不出去。
+自动发布 Windows x64、macOS ARM64 / Intel、Web ZIP 与 SHA256。先更新应用版本、Windows 资源版本和 CHANGELOG，与 tag 保持一致。见 [发布说明](docs/releases.md)。
 
 Release 说明模板位于 [`.github/RELEASE_BODY.md`](.github/RELEASE_BODY.md)，
 其中的版本号与下载文件名会在发布时自动替换。
@@ -281,8 +277,8 @@ WebPForge/
 │   ├── workflows/
 │   │   ├── test.yml             # Windows / Linux 回归测试
 │   │   ├── pages.yml            # 官网构建检查与 GitHub Pages 自动部署
-│   │   ├── build.yml            # 自动打包 Windows + Apple Silicon 并发布 Release
-│   │   └── build-intel.yml      # Intel 版手动构建（避免拖慢发布）
+│   │   ├── build.yml            # 自动打包 Windows + Mac ARM64 / Intel + Web 并发布 Release
+│   │   └── build-intel.yml      # Intel 单独构建备用入口
 │   └── RELEASE_BODY.md          # Release 说明模板
 ├── tests/                       # 转换、文件保护、CLI 与真实 GUI 回归测试
 └── tools/
