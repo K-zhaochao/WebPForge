@@ -71,13 +71,19 @@ class ConversionTests(unittest.TestCase):
 
     def test_overwrite_keeps_all_colliding_batch_outputs(self):
         sources = [self.picture(f"目录{i}/same.png", color=(i * 40, 50, 70)) for i in range(6)]
-        self.out.mkdir()
-        (self.out / "same.webp").write_bytes(b"previous output")
-        items = wc.collect_files(sources)
-        result = wc.run_batch(items, wc.Options(overwrite=True, workers=6), self.out)
-        self.assertEqual((result.ok, result.failed), (6, 0))
-        self.assertEqual(len({it.dst for it in items}), 6)
-        self.assertEqual(len(list(self.out.glob("*.webp"))), 6)
+        # 重复真实并发批次，覆盖 Windows 路径检查与替换之间的短暂竞争窗口。
+        for batch in range(100):
+            with self.subTest(batch=batch):
+                out = self.out / str(batch)
+                out.mkdir(parents=True)
+                (out / "same.webp").write_bytes(b"previous output")
+                items = wc.collect_files(sources)
+                result = wc.run_batch(items, wc.Options(overwrite=True, workers=6), out)
+                self.assertEqual((result.ok, result.failed), (6, 0), result.errors)
+                self.assertEqual(len({it.dst for it in items}), 6)
+                self.assertEqual(len(list(out.glob("*.webp"))), 6)
+                for item in items:
+                    self.assert_valid(item)
 
     def test_external_name_race_does_not_clobber_file(self):
         src = self.picture()

@@ -98,7 +98,7 @@ def is_image_file(path: Path) -> bool:
 # 尚未落盘"的名字, 因此这里用一把进程级锁 + 已预定集合来保证全局唯一。
 # ----------------------------------------------------------------------------
 
-_NAME_LOCK = threading.Lock()
+_NAME_LOCK = threading.RLock()
 _RESERVED: set[str] = set()
 
 
@@ -175,17 +175,20 @@ def _publish_without_overwrite(tmp: Path, dst: Path) -> None:
 
 def _publish_output(tmp: Path, target: Path, overwrite: bool,
                     paths: _OutputPaths) -> Path:
-    while True:
-        dst = paths.reserve(target, overwrite)
-        if overwrite and dst == target:
-            os.replace(tmp, dst)
-            return dst
-        try:
-            _publish_without_overwrite(tmp, dst)
-            return dst
-        except FileExistsError:
-            # 编码期间外部程序可能创建同名文件，重新分配名字再发布。
-            continue
+    # Windows 旧版 Python 的路径检查会短暂占用目标文件。命名检查与发布
+    # 共用锁，避免其他工作线程的检查阻止原子替换；图片编码仍然并行。
+    with _NAME_LOCK:
+        while True:
+            dst = paths.reserve(target, overwrite)
+            if overwrite and dst == target:
+                os.replace(tmp, dst)
+                return dst
+            try:
+                _publish_without_overwrite(tmp, dst)
+                return dst
+            except FileExistsError:
+                # 编码期间外部程序可能创建同名文件，重新分配名字再发布。
+                continue
 
 
 # ----------------------------------------------------------------------------
