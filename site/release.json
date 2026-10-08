@@ -1,20 +1,20 @@
 {
-  "tag": "v1.1.0",
-  "url": "https://github.com/K-zhaochao/WebPForge/releases/tag/v1.1.0",
+  "tag": "v1.1.1",
+  "url": "https://github.com/K-zhaochao/WebPForge/releases/tag/v1.1.1",
   "windows": {
-    "url": "https://github.com/K-zhaochao/WebPForge/releases/download/v1.1.0/WebPForge-1.1.0-Windows-x64.zip",
-    "bytes": 18562118
+    "url": "https://github.com/K-zhaochao/WebPForge/releases/download/v1.1.1/WebPForge-1.1.1-Windows-x64.zip",
+    "bytes": 18562369
   },
   "macos": {
-    "url": "https://github.com/K-zhaochao/WebPForge/releases/download/v1.1.0/WebPForge-1.1.0-macOS-ARM64.zip",
-    "bytes": 14810731
+    "url": "https://github.com/K-zhaochao/WebPForge/releases/download/v1.1.1/WebPForge-1.1.1-macOS-ARM64.zip",
+    "bytes": 14809266
   },
   "intel": {
-    "url": "https://github.com/K-zhaochao/WebPForge/releases/download/v1.1.0/WebPForge-1.1.0-macOS-Intel.zip",
-    "bytes": 16083180
+    "url": "https://github.com/K-zhaochao/WebPForge/releases/download/v1.1.1/WebPForge-1.1.1-macOS-Intel.zip",
+    "bytes": 16082292
   },
   "web": {
-    "url": "https://github.com/K-zhaochao/WebPForge/releases/download/v1.1.0/WebPForge-1.1.0-Web.zip",
-    "bytes": 3307890
+    "url": "https://github.com/K-zhaochao/WebPForge/releases/download/v1.1.1/WebPForge-1.1.1-Web.zip",
+    "bytes": 3307974
   }
 }

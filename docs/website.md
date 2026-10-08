@@ -113,3 +113,15 @@ python tools/prepare_site_assets.py --fonts  # 同时更新开放字体与标题
 
 
 脚本、样式、字体与 worker 使用构建内容哈希文件名，解决自定义域名 CDN 对 JS 长时间缓存造成的版本滞后。HTML 和其模块引用来自同一构建；旧客户端仍需完成一次正常更新。
+
+
+## 2026-10-09 验证记录
+
+- 本地 12 项 Node 和 42 项 Python 测试通过；含实际 GUI、PWA 更新、缓存与打包回归。
+- 320 / 390 / 768 / 1440 像素视口无横向溢出，中文界面字体子集无缺字。
+- 停止本地 HTTP 服务后，缓存页面仍可重载、切换公开示例并转换，下载产物确认为 WEBP 1600×1200。
+- v1.1.1 云端 Windows、Mac ARM64、Mac Intel 与发布作业全部成功；实际下载四个平台包、核对 SHA256，检查 Mac 执行权限 / Mach-O 架构 / plist 版本。
+- 实际下载的 Windows EXE 通过自检、Unicode 路径、stdout / stderr、WebP / PNG / JPEG / AVIF 转换、源文件保护与 JSON 验证。
+- webp.royi.net 浏览器 HTTPS 访问、真实转换与离线就绪状态通过；验证保存后更新提示与操作。
+- 查明 Cloudflare 对旧 JS 设置 4 小时缓存，因此增加内容指纹资源与 worker，并通过联网导航发现新版 HTML；断网时回退缓存。
+- 手机真实设备的系统安装弹窗仍需实际 Android / iOS 设备体验；本次验证的是响应式 UI、平台指引、PWA 清单与 Chromium 离线机制。
