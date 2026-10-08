@@ -43,14 +43,16 @@
 
 | 能力 | 说明 |
 |---|---|
-| 批量转换 | 一次添加成百上千张图片，多线程并发转换 |
+| 批量转换 | 后台扫描文件夹，限制同时在途任务数，按实际完成顺序更新进度 |
 | 拖拽添加 | Windows 下直接把文件/文件夹拖进窗口即可 |
 | 保留画质 | 可调质量 1–100，也可开启**无损模式** |
 | 保留透明 | PNG 的透明通道不会丢失 |
 | 纠正方向 | 自动处理手机照片的 EXIF 旋转标记 |
 | 保留动画 | 动图 GIF 转成**动态 WebP**，帧和循环都在 |
-| 智能模式 | 若转换后反而更大，自动保留原图，避免越转越糊 |
-| 绝不覆盖 | 遇到重名自动改名 `名字(1).webp`，永不丢文件 |
+| 智能模式 | 结果不小于原图时跳过，不产生输出文件；界面默认开启，CLI 用 `--smaller-only` 开启 |
+| 原图保护 | 默认重名自动改为 `名字(1).webp`；可覆盖已有输出，始终保护本批全部输入文件 |
+| 停止与重试 | 停止后可继续未完成项，也可仅重试失败项；单个文件失败不影响整批 |
+| 图片预览 | 按照片实际方向预览，自适应窗口尺寸，转换后显示真实输出大小 |
 | 保留结构 | 可选择重建子文件夹层级 |
 | 缩放限制 | 可指定「最长边不超过 N 像素」批量压尺寸 |
 | 中文友好 | 中文文件名、中文路径完全支持 |
@@ -58,6 +60,9 @@
 
 支持的输入格式：JPG / JPEG / PNG / BMP / GIF / TIFF / TGA / ICO / WebP / AVIF 及 Pillow 支持的其它格式。
 输出格式：**WebP（默认）**，也支持 PNG / JPEG / AVIF。
+
+AVIF 编码取决于当前 Pillow 的支持情况，建议使用较新的 Python 与 Pillow。
+HEIC、RAW 等扩展名可能需要额外的 Pillow 插件；不支持或损坏的文件会单独报告失败。
 
 ---
 
@@ -89,19 +94,34 @@
 
 快捷键 `Ctrl+U` 同样可以打开「关于」窗口。
 
+### 停止、继续与重试
+
+- 点击「停止」或按 `Esc` 后不再启动新任务，等待正在编码的图片结束并清理临时文件。
+- 取消项单独标记为「已取消」，不会计入压缩率，也不会把进度强行显示成 100%。
+- 再次点击「开始转换」继续失败或取消的项目；「重试失败」只处理失败项。
+- 所有项目都已完成或智能跳过时，再次开始会询问是否按当前设置重新处理。
+- 扫描或转换期间，添加、移除、清空和转换设置会暂时锁定；关闭窗口会先停止任务再退出。
+- 预览页的「打开输出文件夹」可定位选中图片的输出目录；未生成输出时打开原图目录。
+
+指定的输出文件夹位于输入文件夹内部时，后续文件夹扫描会排除该输出子目录。
+已加入列表的图片保留不变；显式选择该目录或其中的图片仍可处理。
+
 ### 设置项建议
 
 | 选项 | 建议 |
 |---|---|
 | **格式** | 保持 `WebP`；需要兼容老软件时才改 JPEG/PNG |
 | **质量** | 网页用 **75–85** 最划算；存档用 90–95 |
-| **无损模式** | 只在需要像素级还原时开（文件会大很多） |
-| **智能模式** | **建议保持勾选**，避免已压缩过的图被二次压缩 |
+| **无损模式** | 支持 WebP / PNG；PNG 开启后禁用调色板量化。JPEG / AVIF 不提供此选项 |
+| **智能模式** | 只保留体积更小的转换结果；要求每张输入都有目标格式文件时，请关闭 |
 | **输出位置** | 默认「与原图放在一起」；批量处理建议选一个单独的输出文件夹 |
 | **保留子文件夹结构** | 处理整个项目目录时勾选 |
-| **覆盖同名文件** | 默认**不勾**（自动改名更安全） |
+| **覆盖已有输出** | 默认**不勾**；勾选后替换已有输出，本批输入及并发重名任务仍会自动避让 |
 | **透明区域填充背景色** | 转 JPEG 时必要；转 WebP 一般不用勾 |
 | **最长边** | 填 `0` 表示不缩放；例如填 `1920` 可批量限制宽度 |
+
+PNG 的质量低于 100 且未勾选无损时，会使用调色板量化减少颜色。
+背景色、最长边和 CLI 数值参数填写错误时会在开始前提示，不会静默改成默认值。
 
 ---
 
@@ -129,20 +149,27 @@ python webp_converter.py --cli -i ./照片 -o ./out -q 80
 |---|---|
 | `--cli` | 命令行模式（不打开界面） |
 | `-i, --input` | 输入文件 / 文件夹 / 通配符，可多个 |
-| `-o, --outdir` | 输出目录（默认与原图同目录） |
+| `-o, --outdir` | 输出目录（省略时与原图同目录；`-o .` 明确指当前工作目录） |
 | `-q, --quality` | 质量 1–100，默认 80 |
 | `-f, --format` | 输出格式：`webp`(默认) / `png` / `jpeg` / `avif` |
-| `--lossless` | 无损编码 |
+| `--lossless` | WebP / PNG 无损编码；JPEG / AVIF 使用此参数会报错 |
 | `--keep` | 保留子文件夹结构 |
-| `--overwrite` | 覆盖同名文件（默认自动改名） |
+| `--overwrite` | 覆盖已有输出，保护本批全部输入与同批并发输出（默认自动改名） |
 | `--flatten` | 透明区域填充背景色 |
 | `--bg` | 填充色，默认 `#ffffff` |
 | `--max-edge` | 限制最长边像素，0 = 不缩放 |
 | `--smaller-only` | 仅当结果更小才写入 |
 | `--no-recursive` | 不递归子文件夹 |
 | `-j, --workers` | 并发线程数（默认自动） |
-| `--json` | 以 JSON 输出结果，便于脚本调用 |
-| `--selftest` | 自检：验证环境与转换功能是否正常 |
+| `--json` | JSON 汇总及逐文件结果，包含实际输出路径、状态、大小与错误 |
+| `--selftest [REPORT]` | 环境与转换自检，可指定报告文件路径 |
+
+`Ctrl+C` 会请求停止任务并清理尚未发布的结果。
+退出码：`0` 全部成功或智能跳过，`1` 未找到输入或运行环境错误，`2` 参数错误，
+`3` 部分文件失败，`130` 存在取消项。
+JSON 保留原有汇总字段，并增加 `cancelled` 与 `items`；每项状态为
+`ok` / `skipped` / `failed` / `cancelled`，没有生成输出时 `output` 为 `null`。
+Windows 下 CLI 的标准输出和错误输出统一使用 UTF-8，支持管道与文件重定向。
 
 ---
 
@@ -150,7 +177,7 @@ python webp_converter.py --cli -i ./照片 -o ./out -q 80
 
 ```bash
 git clone https://github.com/K-zhaochao/WebPForge.git
-cd REPO
+cd WebPForge
 python -m pip install pillow
 python webp_converter.py          # 打开界面
 python webp_converter.py --selftest
@@ -193,7 +220,7 @@ pyinstaller --clean --noconfirm build.spec
 
 ## 发布新版本
 
-推送一个版本 tag，GitHub Actions 会自动构建三个平台并创建 Release：
+推送一个版本 tag，GitHub Actions 会自动构建 Windows 与 Apple Silicon 两个平台并创建 Release：
 
 ```bash
 git tag v1.0.0
@@ -218,6 +245,7 @@ WebPForge/
 ├── webp_converter.py            # 全部逻辑：界面 + 转换引擎 + 命令行
 ├── README.md                    # 中文说明（默认展示）
 ├── README.en.md                 # English documentation
+├── CHANGELOG.md                 # 版本改动与验证记录
 ├── LICENSE                      # MIT
 ├── build.spec                   # PyInstaller 打包配置
 ├── build_windows.ps1            # Windows 一键打包（含产物自检）
@@ -227,15 +255,18 @@ WebPForge/
 ├── assets/                      # 图标（由 make_icon.py 生成）
 ├── .github/
 │   ├── workflows/
+│   │   ├── test.yml             # Windows / Linux 回归测试
 │   │   ├── build.yml            # 自动打包 Windows + Apple Silicon 并发布 Release
 │   │   └── build-intel.yml      # Intel 版手动构建（避免拖慢发布）
 │   └── RELEASE_BODY.md          # Release 说明模板
+├── tests/                       # 转换、文件保护、CLI 与真实 GUI 回归测试
 └── tools/
     ├── make_icon.py             # 生成 .ico / .icns 图标
     ├── make_testdata.py         # 生成测试图片（含中文名/透明/动图/损坏文件）
     ├── stress_test.py           # 并发安全压力测试
     ├── test_gui_flow.py         # 界面交互链路测试
     ├── test_gui_launch.py       # 界面启动测试
+    ├── test_packaged.py         # EXE 自检、JSON 重定向与四种输出格式测试
     ├── diag_gui.py              # 界面诊断
     └── find_window.py           # 定位程序窗口（验证打包产物）
 ```
@@ -245,11 +276,18 @@ WebPForge/
 ## 测试
 
 ```bash
+python -m unittest discover -s tests -v      # 全部回归测试（GUI 需要桌面环境）
 python webp_converter.py --selftest          # 环境 + 转换自检
 python tools/make_testdata.py _testdata      # 造测试图
 python tools/stress_test.py _stress          # 并发安全测试（72 个同名冲突文件）
-python tools/test_gui_flow.py                # 界面链路测试
+python tools/test_gui_flow.py               # 真实窗口：扫描、预览、停止、继续、失败重试
+python tools/test_gui_launch.py             # 主线程窗口启动与正常关闭
+python tools/test_packaged.py dist/WebPForge.exe  # 打包后验证（当前 Pillow 须支持 AVIF）
 ```
+
+回归测试使用临时目录并自动清理，不需要提前生成 `_testdata`。
+无桌面的 Linux 可用 `xvfb-run -a python -m unittest discover -s tests -v`；
+未提供显示服务时 GUI 测试会明确跳过。`test.yml` 在 Windows / Linux、Python 3.8 / 3.13 上运行测试。
 
 ---
 
@@ -262,10 +300,12 @@ A：原图可能已经是 WebP，或本身就是高压缩的 JPEG。保持「智
 A：WebP **支持**透明，默认会保留。只有你勾了「透明区域填充背景色」或输出格式选了 JPEG 才会丢透明。
 
 **Q：GIF 动图会变成静态图吗？**
-A：不会。转成 WebP 时会保留全部帧、每帧时长和循环次数。
+A：转成 WebP 时保留全部帧、每帧时长和循环设置；没有循环标记的 GIF 播放一次。
+转成 PNG / JPEG / AVIF 时目前只输出首帧，转换结果会注明。
 
 **Q：会不会覆盖我原来的图片？**
-A：不会。程序只**新增** `.webp` 文件，从不删除或改写原图；遇到同名文件会自动改名为 `名字(1).webp`。
+A：默认只新增文件，重名自动改为 `名字(1).webp`。即使开启「覆盖已有输出」，
+本批所有输入图片也受保护；已有输出会在编码成功后才被替换，失败或取消时保留旧文件。
 
 **Q：要处理几千张图片，要多久？**
 A：程序按 CPU 核心数自动并发。1000 张普通照片通常在 1–3 分钟内完成。

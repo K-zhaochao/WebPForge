@@ -61,6 +61,10 @@ jobs:
         shell: pwsh
         run: .\build_windows.ps1 -SkipZip
 
+      - name: 验证 Windows 可执行文件
+        if: matrix.kind == 'windows'
+        run: python -X utf8 tools/test_packaged.py dist/WebPForge.exe
+
       - name: 上传 Windows 产物
         if: matrix.kind == 'windows'
         uses: actions/upload-artifact@v4

@@ -1,0 +1,36 @@
+name: Tests
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.os }} / Python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ['3.8', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dependencies
+        run: python -m pip install pillow
+      - name: Install virtual display
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth
+      - name: Conversion and real GUI tests (Windows)
+        if: runner.os == 'Windows'
+        run: python -X utf8 -m unittest discover -s tests -v
+      - name: Conversion and real GUI tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python -X utf8 -m unittest discover -s tests -v

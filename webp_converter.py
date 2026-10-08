@@ -14,7 +14,7 @@ WebPForge —— 批量图片转 WebP 工具
 2. 命令行 (可选, 便于批处理脚本调用)
       WebPForge --cli -i "D:/photos" -o "D:/out" -q 80
 
-项目主页: https://github.com/<your-name>/webpforge
+项目主页: https://github.com/K-zhaochao/WebPForge
 许可: MIT
 """
 
@@ -29,7 +29,7 @@ import tempfile
 import traceback
 import time
 import json
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -109,19 +109,31 @@ def _key(path: Path) -> str:
         return os.path.normcase(os.path.abspath(str(path)))
 
 
-def reserve_unique_path(path: Path) -> Path:
+def _output_key(path: Path) -> str:
+    key = _key(path)
+    # macOS 默认 APFS 卷不区分大小写；保守避让大小写冲突，扫描去重不受影响。
+    return key.casefold() if sys.platform == "darwin" else key
+
+
+def reserve_unique_path(path: Path, overwrite: bool = False,
+                        protected: set[str] | None = None,
+                        owner: set[str] | None = None) -> Path:
     """在并发环境下为 path 分配一个唯一的输出文件名。
 
-    name.webp -> name(1).webp -> name(2).webp ... 绝不覆盖已存在的文件。
+    默认 name.webp -> name(1).webp -> name(2).webp；覆盖仅允许原始目标名。
     """
     with _NAME_LOCK:
         stem, suffix, parent = path.stem, path.suffix, path.parent
         cand = path
         i = 0
         while True:
-            k = _key(cand)
-            if k not in _RESERVED and not cand.exists():
+            k = _output_key(cand)
+            can_replace = overwrite and i == 0 and not cand.is_dir()
+            if (k not in _RESERVED and k not in (protected or ())
+                    and (can_replace or not os.path.lexists(cand))):
                 _RESERVED.add(k)
+                if owner is not None:
+                    owner.add(k)
                 return cand
             i += 1
             if i > 100000:
@@ -132,7 +144,48 @@ def reserve_unique_path(path: Path) -> Path:
 def release_reserved_path(path: Path) -> None:
     """转换失败时释放预定, 让后续任务可以复用这个名字。"""
     with _NAME_LOCK:
-        _RESERVED.discard(_key(path))
+        _RESERVED.discard(_output_key(path))
+
+
+class _OutputPaths:
+    """一次批处理的文件名预留；保护全部输入，结束后统一释放。"""
+
+    def __init__(self, sources):
+        self.protected = {_output_key(src) for src in sources}
+        self.keys: set[str] = set()
+
+    def reserve(self, path: Path, overwrite: bool) -> Path:
+        return reserve_unique_path(path, overwrite, self.protected, self.keys)
+
+    def close(self) -> None:
+        # 用预留时的 key：替换符号链接后 resolve() 的结果可能已经改变。
+        with _NAME_LOCK:
+            _RESERVED.difference_update(self.keys)
+            self.keys.clear()
+
+
+def _publish_without_overwrite(tmp: Path, dst: Path) -> None:
+    """原子发布；其他进程抢先创建目标文件时也不覆盖。"""
+    if os.name == "nt":
+        os.rename(tmp, dst)  # Windows 的 rename 在目标已存在时失败
+    else:
+        os.link(tmp, dst)    # 同目录硬链接：POSIX 下原子且不会替换目标
+        tmp.unlink()
+
+
+def _publish_output(tmp: Path, target: Path, overwrite: bool,
+                    paths: _OutputPaths) -> Path:
+    while True:
+        dst = paths.reserve(target, overwrite)
+        if overwrite and dst == target:
+            os.replace(tmp, dst)
+            return dst
+        try:
+            _publish_without_overwrite(tmp, dst)
+            return dst
+        except FileExistsError:
+            # 编码期间外部程序可能创建同名文件，重新分配名字再发布。
+            continue
 
 
 # ----------------------------------------------------------------------------
@@ -150,7 +203,7 @@ class Options:
     flatten: bool = False          # 透明区域填充背景色(而不是保留透明)
     bg: str = "#ffffff"            # 填充色
     max_edge: int = 0              # 限制最长边像素, 0 = 不缩放
-    also_smaller_only: bool = False  # 仅当结果更小才写盘(用于 webp 输出)
+    also_smaller_only: bool = False  # 仅当结果更小才写盘
     workers: int = 0               # 线程数, 0 = 自动
     recursive: bool = True
 
@@ -159,7 +212,7 @@ class Options:
 class Item:
     src: Path
     rel: str = ""            # 相对于扫描根目录的路径(用于保留结构)
-    status: str = "等待"      # 等待 / 转换中 / 完成 / 跳过 / 失败
+    status: str = "等待"      # 等待 / 转换中 / 完成 / 跳过 / 失败 / 已取消
     dst: str = ""
     src_size: int = 0
     dst_size: int = 0
@@ -171,6 +224,7 @@ class Result:
     ok: int = 0
     skipped: int = 0
     failed: int = 0
+    cancelled: int = 0
     src_bytes: int = 0
     dst_bytes: int = 0
     elapsed: float = 0.0
@@ -188,249 +242,207 @@ def _pil():
 
 
 def _flatten_color(Image, bg: str):
+    with Image.new("RGB", (1, 1), bg) as sample:
+        return sample.getpixel((0, 0))
+
+
+def validate_options(opts: Options) -> None:
+    """GUI、CLI 与批处理共用校验，错误设置在转换前报告。"""
+    if opts.out_fmt not in ("webp", "png", "jpeg", "avif"):
+        raise ValueError("不支持的输出格式")
+    if not 1 <= opts.quality <= 100:
+        raise ValueError("质量必须在 1–100 之间")
+    if opts.max_edge < 0:
+        raise ValueError("最长边必须为非负整数，0 表示不缩放")
+    if opts.workers < 0:
+        raise ValueError("线程数必须为非负整数，0 表示自动")
+    if opts.lossless and opts.out_fmt not in ("webp", "png"):
+        raise ValueError("无损模式仅支持 WebP 和 PNG，请更换格式或关闭无损模式")
+    Image, _ = _pil()
     try:
-        tmp = Image.new("RGB", (1, 1), bg)
-        return tmp.getpixel((0, 0))
-    except Exception:
-        return (255, 255, 255)
+        _flatten_color(Image, opts.bg)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("背景色无效，请填写 #ffffff 这样的颜色值") from exc
+    Image.init()
+    if opts.out_fmt.upper() not in Image.SAVE:
+        raise ValueError(f"当前 Pillow 不支持 {opts.out_fmt.upper()} 编码，请升级 Pillow")
 
 
 def resolve_target_dir(item: Item, opts: Options, out_root: Path | None) -> Path:
-    """决定某张图片应该写到哪个目录。
-
-    out_root 为 None 或 "." 时表示"就在原图旁边"(原地输出);
-    指定输出目录时, keep_structure 决定是否重建子文件夹层级。
-    """
-    if out_root is None or str(out_root) in (".", ""):
+    """None 表示原图旁边；显式指定的 '.' 表示当前工作目录。"""
+    if out_root is None:
         return item.src.parent
-    if opts.keep_structure and item.rel and item.rel not in (".", ""):
-        return out_root / item.rel
+    if opts.keep_structure and item.rel and item.rel != ".":
+        relative = Path(item.rel)
+        if relative.is_absolute() or relative.drive or ".." in relative.parts:
+            raise ValueError("子文件夹路径必须位于输出目录内")
+        return out_root / relative
     return out_root
 
 
-def convert_one(item: Item, opts: Options, out_root: Path | None) -> Item:
-    """转换单张图片。就地修改 item 并返回。"""
-    Image, ImageOps = _pil()
-    src = item.src
+class _ConversionCancelled(Exception):
+    pass
 
+
+def _check_cancelled(should_stop) -> None:
+    if should_stop and should_stop():
+        raise _ConversionCancelled()
+
+
+def _cancel_item(item: Item) -> Item:
+    item.status = "已取消"
+    item.dst = ""
+    item.dst_size = 0
+    item.message = "已取消，可再次开始转换"
+    return item
+
+
+def _prepare_image(im, opts: Options, Image, ImageOps):
+    """统一处理方向、缩放和透明度，供单帧和动画使用。"""
+    image = ImageOps.exif_transpose(im)
     try:
-        item.src_size = src.stat().st_size
-    except OSError:
-        item.src_size = 0
+        if opts.max_edge:
+            image.thumbnail((opts.max_edge, opts.max_edge), Image.LANCZOS)
+        has_alpha = image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info
+        if (opts.flatten or opts.out_fmt == "jpeg") and has_alpha:
+            metadata = dict(image.info)
+            metadata.pop("transparency", None)
+            with image.convert("RGBA") as rgba:
+                canvas = Image.new("RGB", image.size, _flatten_color(Image, opts.bg))
+                with rgba.getchannel("A") as alpha:
+                    canvas.paste(rgba, mask=alpha)
+                canvas.info.update(metadata)
+            image.close()
+            image = canvas
+        if opts.out_fmt == "jpeg" and image.mode not in ("RGB", "L"):
+            converted = image.convert("RGB")
+            image.close()
+            image = converted
+        elif opts.out_fmt == "png" and image.mode not in ("1", "L", "LA", "I", "I;16", "RGB", "RGBA"):
+            converted = image.convert("RGBA" if has_alpha and not opts.flatten else "RGB")
+            image.close()
+            image = converted
+        return image
+    except Exception:
+        image.close()
+        raise
 
-    # 计算输出路径(并发安全, 绝不覆盖已有文件)
-    target_dir = resolve_target_dir(item, opts, out_root)
-    target_dir.mkdir(parents=True, exist_ok=True)
-    dst = reserve_unique_path(target_dir / (src.stem + opts.out_ext))
 
-    def new_tmp() -> Path:
-        """同目录下的唯一临时文件, 保证原子替换且线程间不打架。"""
-        fd, name = tempfile.mkstemp(prefix=".wc_tmp_", suffix=opts.out_ext, dir=str(target_dir))
-        os.close(fd)
-        tmp_holder["path"] = name
-        return Path(name)
-
-    tmp_holder: dict = {"path": None}
+def convert_one(item: Item, opts: Options, out_root: Path | None, *,
+                should_stop=None, output_paths: _OutputPaths | None = None) -> Item:
+    """转换单张图片；失败或取消不留下输出，也不保留上次的结果字段。"""
+    own_paths = output_paths is None
+    paths = output_paths
+    tmp_dst = None
+    frames = []
+    item.status, item.dst, item.dst_size, item.message = "转换中", "", 0, ""
     try:
-        with Image.open(src) as im:
+        _check_cancelled(should_stop)
+        if own_paths:
+            validate_options(opts)
+            paths = _OutputPaths([item.src])
+        Image, ImageOps = _pil()
+        item.src_size = item.src.stat().st_size
+        target_dir = resolve_target_dir(item, opts, out_root)
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / (item.src.stem + opts.out_ext)
+
+        with Image.open(item.src) as im:
             im.load()
-
-            # 必须在任何变换之前读取帧数: exif_transpose/resize 都会丢掉多帧信息
             n_frames = int(getattr(im, "n_frames", 1) or 1)
-            fmt = opts.out_fmt
+            animated = n_frames > 1 and opts.out_fmt == "webp"
+            # GIF 没有循环扩展时只播放一次；不能默认为无限循环。
+            loop = int(im.info.get("loop", 1))
+            durations = []
+            for index in range(n_frames if animated else 1):
+                _check_cancelled(should_stop)
+                im.seek(index)
+                frames.append(_prepare_image(im, opts, Image, ImageOps))
+                durations.append(max(0, int(im.info.get("duration", 100))))
 
-            # 动画图片(GIF/动态 WebP) → 保留全部帧
-            if n_frames > 1 and fmt in ("webp", "gif"):
-                total_dur = int(im.info.get("duration", 100) or 100)
-                frames, durations = [], []
-                for idx in range(n_frames):
-                    try:
-                        im.seek(idx)
-                    except EOFError:
-                        break
-                    fr = im.convert("RGBA") if im.mode not in ("RGB", "RGBA") else im.copy()
-                    if opts.flatten:
-                        bg_rgb = _flatten_color(Image, opts.bg)
-                        canvas = Image.new("RGB", fr.size, bg_rgb)
-                        if fr.mode == "RGBA":
-                            canvas.paste(fr, mask=fr.split()[-1])
-                        else:
-                            canvas.paste(fr)
-                        fr = canvas
-                    if opts.max_edge and max(fr.size) > opts.max_edge:
-                        sc = opts.max_edge / float(max(fr.size))
-                        fr = fr.resize((max(1, round(fr.width * sc)), max(1, round(fr.height * sc))),
-                                       Image.LANCZOS)
-                    frames.append(fr)
-                    durations.append(max(20, int(im.info.get("duration", total_dur) or total_dur)))
-
-                if len(frames) > 1:
-                    save_kwargs: dict = {
-                        "save_all": True,
-                        "append_images": frames[1:],
-                        "duration": durations,
-                        "loop": int(im.info.get("loop", 0) or 0),
-                        "lossless": bool(opts.lossless),
-                    }
-                    if not opts.lossless:
-                        save_kwargs["quality"] = int(opts.quality)
-                        save_kwargs["method"] = 6
-                    tmp_dst = new_tmp()
-                    try:
-                        frames[0].save(tmp_dst, format="WEBP", **save_kwargs)
-                    except TypeError:
-                        frames[0].save(tmp_dst, format="WEBP", save_all=True,
-                                       append_images=frames[1:], quality=int(opts.quality))
-
-                    new_size = tmp_dst.stat().st_size
-                    if opts.also_smaller_only and item.src_size and new_size >= item.src_size:
-                        tmp_dst.unlink(missing_ok=True)
-                        release_reserved_path(dst)
-                        item.status, item.dst_size = "跳过", item.src_size
-                        item.message = f"原文件更小({human_size(item.src_size)}), 已保留原图"
-                        return item
-                    os.replace(tmp_dst, dst)
-                    item.dst = str(dst)
-                    item.dst_size = new_size
-                    item.status = "完成"
-                    item.message = (f"{human_size(item.src_size)} → {human_size(new_size)}"
-                                    f" · 动画 {len(frames)} 帧")
-                    return item
-
-            # 手机照片的 EXIF 旋转(单帧图片才做)
-            try:
-                im = ImageOps.exif_transpose(im)
-            except Exception:
-                pass
-
-            # 限制尺寸
-            if opts.max_edge and max(im.size) > opts.max_edge:
-                scale = opts.max_edge / float(max(im.size))
-                new_size = (max(1, round(im.width * scale)), max(1, round(im.height * scale)))
-                im = im.resize(new_size, Image.LANCZOS)
-
-            # 透明背景处理
-            if opts.flatten and im.mode in ("RGBA", "LA", "PA", "P"):
-                if im.mode == "P":
-                    im = im.convert("RGBA")
-                if im.mode in ("RGBA", "LA", "PA"):
-                    bg_rgb = _flatten_color(Image, opts.bg)
-                    rgba = im.convert("RGBA")
-                    canvas = Image.new("RGB", rgba.size, bg_rgb)
-                    canvas.paste(rgba, mask=rgba.split()[-1])
-                    im = canvas
-
-            save_kwargs: dict = {}
-
-            if fmt == "webp":
-                save_kwargs["lossless"] = bool(opts.lossless)
-                if not opts.lossless:
-                    save_kwargs["quality"] = int(opts.quality)
-                    save_kwargs["method"] = 6
-                # 保留 EXIF (若存在)
-                exif = None
-                try:
-                    exif = im.info.get("exif")
-                except Exception:
-                    exif = None
-                if exif:
-                    save_kwargs["exif"] = exif
-            elif fmt == "jpeg":
-                if im.mode not in ("RGB", "L"):
-                    if im.mode in ("RGBA", "LA", "PA"):
-                        bg_rgb = _flatten_color(Image, opts.bg)
-                        rgba = im.convert("RGBA")
-                        canvas = Image.new("RGB", rgba.size, bg_rgb)
-                        canvas.paste(rgba, mask=rgba.split()[-1])
-                        im = canvas
-                    else:
-                        im = im.convert("RGB")
-                save_kwargs["quality"] = int(opts.quality)
-                save_kwargs["optimize"] = True
-                save_kwargs["progressive"] = True
-                save_kwargs["subsampling"] = 0 if opts.quality >= 90 else 2
-            elif fmt == "png":
-                if im.mode == "P":
-                    im = im.convert("RGBA" if "transparency" in im.info else "RGB")
-                save_kwargs["optimize"] = True
-                # 质量 < 100 时走调色板, 体积可小很多
-                if opts.quality < 100 and im.mode in ("RGB", "RGBA", "L", "LA"):
+            first = frames[0]
+            kwargs = {}
+            for metadata in ("icc_profile", "exif"):
+                if first.info.get(metadata):
+                    kwargs[metadata] = first.info[metadata]
+            if opts.out_fmt == "webp":
+                kwargs.update(lossless=opts.lossless, quality=opts.quality,
+                              method=6, exact=opts.lossless)
+                if animated:
+                    kwargs.update(save_all=True, append_images=frames[1:],
+                                  duration=durations, loop=loop)
+            elif opts.out_fmt == "jpeg":
+                kwargs.update(quality=opts.quality, optimize=True, progressive=True,
+                              subsampling=0 if opts.quality >= 90 else 2)
+            elif opts.out_fmt == "png":
+                kwargs["optimize"] = True
+                if not opts.lossless and opts.quality < 100 and first.mode in ("RGB", "RGBA", "L", "LA"):
                     colors = 256 if opts.quality >= 75 else max(8, int(256 * opts.quality / 100))
-                    try:
-                        if im.mode == "RGBA":
-                            # 保留 1 位透明: 需要 ALPHA 转 TRANSPARENCY 的量化结果
-                            im = im.quantize(colors=colors, method=Image.MEDIANCUT)
-                        elif im.mode == "LA":
-                            im = im.convert("RGBA").quantize(colors=colors, method=Image.MEDIANCUT)
-                        else:
-                            im = im.quantize(colors=colors, method=Image.MEDIANCUT)
-                    except Exception:
-                        pass
-            elif fmt == "avif":
-                save_kwargs["quality"] = int(opts.quality)
-                if opts.lossless:
-                    save_kwargs["lossless"] = True
+                    if first.mode == "LA":
+                        converted = first.convert("RGBA")
+                        first.close()
+                        first = frames[0] = converted
+                    method = Image.FASTOCTREE if first.mode == "RGBA" else Image.MEDIANCUT
+                    quantized = first.quantize(colors=colors, method=method)
+                    first.close()
+                    first = frames[0] = quantized
+            elif opts.out_fmt == "avif":
+                # 每个转换任务只使用一个 AVIF 编码线程，避免批量时嵌套并发。
+                kwargs.update(quality=opts.quality, max_threads=1)
 
-            # 避免 EXIF 重复旋转: 已 apply 过 transpose, 清掉方向标记
-            try:
-                ex = im.getexif()
-                if ex and 0x0112 in ex:
-                    ex[0x0112] = 1
-                    if fmt != "webp":
-                        save_kwargs["exif"] = ex.tobytes()
-            except Exception:
-                pass
+            _check_cancelled(should_stop)
+            fd, name = tempfile.mkstemp(prefix=".wc_tmp_", suffix=opts.out_ext,
+                                       dir=str(target_dir))
+            os.close(fd)
+            tmp_dst = Path(name)
+            first.save(tmp_dst, format=opts.out_fmt.upper(), **kwargs)
 
-            tmp_dst = new_tmp()
-            try:
-                im.save(tmp_dst, format=fmt.upper() if fmt != "jpeg" else "JPEG", **save_kwargs)
-            except TypeError:
-                # 某些 Pillow 版本不接受个别参数
-                safe = {k: v for k, v in save_kwargs.items() if k in ("quality", "lossless")}
-                im.save(tmp_dst, format=fmt.upper() if fmt != "jpeg" else "JPEG", **safe)
-
+        _check_cancelled(should_stop)
         new_size = tmp_dst.stat().st_size
-
-        # "仅更小才替换" 模式
         if opts.also_smaller_only and item.src_size and new_size >= item.src_size:
-            tmp_dst.unlink(missing_ok=True)
-            release_reserved_path(dst)
             item.status = "跳过"
             item.dst_size = item.src_size
-            item.message = f"原文件更小({human_size(item.src_size)}), 已保留原图"
+            item.message = f"原文件更小或相同({human_size(item.src_size)}), 已保留原图"
             return item
 
-        os.replace(tmp_dst, dst)
+        dst = _publish_output(tmp_dst, target, opts.overwrite, paths)
         item.dst = str(dst)
         item.dst_size = new_size
-        ratio = ""
-        if item.src_size:
-            delta = (new_size - item.src_size) / item.src_size * 100.0
-            ratio = f" ({delta:+.0f}%)"
         item.status = "完成"
+        ratio = f" ({(new_size - item.src_size) / item.src_size * 100:+.0f}%)" if item.src_size else ""
         item.message = f"{human_size(item.src_size)} → {human_size(new_size)}{ratio}"
+        if animated:
+            item.message += f" · 动画 {len(frames)} 帧"
+        elif n_frames > 1:
+            item.message += " · 当前输出格式仅保留首帧"
         return item
-
-    except Exception as exc:  # noqa: BLE001
-        # 失败时清理临时文件并归还名字, 避免留下垃圾 / 后续任务无法复用
-        try:
-            if tmp_holder["path"]:
-                Path(tmp_holder["path"]).unlink(missing_ok=True)
-        except Exception:
-            pass
-        release_reserved_path(dst)
+    except _ConversionCancelled:
+        return _cancel_item(item)
+    except Exception as exc:
         item.status = "失败"
         item.message = f"{type(exc).__name__}: {exc}"
         return item
+    finally:
+        for frame in frames:
+            frame.close()
+        if tmp_dst is not None:
+            try:
+                tmp_dst.unlink(missing_ok=True)
+            except OSError:
+                pass
+        if own_paths and paths is not None:
+            paths.close()
 
 
-def collect_files(inputs: list[Path], recursive: bool = True) -> list[Item]:
+def collect_files(inputs: list[Path], recursive: bool = True, *,
+                  should_stop=None, exclude_dirs=()) -> list[Item]:
     """把输入(文件或文件夹)展开成待转换图片列表, 自动去重。"""
     items: list[Item] = []
     seen: set[str] = set()
+    excluded = {_key(Path(path)) for path in exclude_dirs}
 
     def add(p: Path, rel: str):
-        key = str(p.resolve()).lower()
+        key = _key(p)
         if key in seen:
             return
         seen.add(key)
@@ -441,77 +453,129 @@ def collect_files(inputs: list[Path], recursive: bool = True) -> list[Item]:
         items.append(Item(src=p, rel=rel, src_size=size))
 
     for raw in inputs:
+        if should_stop and should_stop():
+            break
         p = Path(raw)
         if p.is_dir():
-            it = p.rglob("*") if recursive else p.glob("*")
-            for f in sorted(it):
-                if f.is_file() and is_image_file(f):
-                    try:
-                        rel = str(f.parent.relative_to(p))
-                    except ValueError:
-                        rel = ""
-                    if rel == ".":
-                        rel = ""
-                    add(f, rel)
+            for directory, subdirs, filenames in os.walk(p):
+                if should_stop and should_stop():
+                    break
+                base = Path(directory)
+                subdirs[:] = sorted(d for d in subdirs if recursive and _key(base / d) not in excluded)
+                rel = str(base.relative_to(p))
+                for name in sorted(filenames):
+                    if should_stop and should_stop():
+                        break
+                    f = base / name
+                    if is_image_file(f) and f.is_file():
+                        add(f, "" if rel == "." else rel)
         elif p.is_file():
             add(p, "")
         elif not p.exists():
             # 允许通配符
             import glob as _glob
-            for g in sorted(_glob.glob(str(raw), recursive=recursive)):
+            for g in _glob.iglob(str(raw), recursive=recursive):
+                if should_stop and should_stop():
+                    break
                 gp = Path(g)
                 if gp.is_file() and is_image_file(gp):
                     add(gp, "")
     return items
 
 
+def load_preview(path: Path, bounds=(1000, 1000)):
+    """只解码一次并缓存缩略图；手机照片预览与实际转换方向一致。"""
+    Image, ImageOps = _pil()
+    with Image.open(path) as original:
+        size = original.size
+        if original.getexif().get(0x0112) in (5, 6, 7, 8):
+            size = size[::-1]
+        original.draft("RGB", bounds)
+        thumb = ImageOps.exif_transpose(original)
+        try:
+            thumb.thumbnail(bounds, Image.LANCZOS)
+            if thumb.mode not in ("RGB", "RGBA", "L") or "transparency" in thumb.info:
+                converted = thumb.convert("RGBA")
+                thumb.close()
+                thumb = converted
+            return thumb, size
+        except Exception:
+            thumb.close()
+            raise
+
+
 def run_batch(items: list[Item], opts: Options, out_root: Path | None,
               progress=None, should_stop=None) -> Result:
-    """并发批量转换。progress(done, total, item) 会在每张图完成后被调用。
-
-    out_root 传 None 表示原地输出(写在每张原图旁边)。
-    """
+    """按完成顺序报告结果，同时在途任务不超过线程数；取消后不再提交新任务。"""
+    validate_options(opts)
     res = Result()
     total = len(items)
     if total == 0:
         return res
 
-    workers = opts.workers or min(8, max(1, (os.cpu_count() or 4)))
-    workers = max(1, min(workers, total))
-
+    workers = min(opts.workers or min(8, os.cpu_count() or 4), total)
     done = 0
-    lock = threading.Lock()
-    t0 = time.time()
+    next_index = 0
+    t0 = time.monotonic()
+    paths = _OutputPaths(it.src for it in items)
 
-    def work(it: Item) -> Item:
-        if should_stop and should_stop():
-            it.status = "跳过"
-            it.message = "已取消"
-            return it
-        return convert_one(it, opts, out_root)
+    def stopped():
+        return bool(should_stop and should_stop())
 
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        for it in pool.map(work, items):
-            with lock:
-                done += 1
-                if it.status == "完成":
-                    res.ok += 1
-                    res.src_bytes += it.src_size
-                    res.dst_bytes += it.dst_size
-                elif it.status == "跳过":
-                    res.skipped += 1
-                    res.dst_bytes += (it.dst_size or it.src_size)
-                    res.src_bytes += it.src_size
-                else:
-                    res.failed += 1
-                    res.errors.append((str(it.src), it.message))
-                if progress:
+    def report(it: Item):
+        nonlocal done
+        done += 1
+        if it.status == "完成":
+            res.ok += 1
+            res.src_bytes += it.src_size
+            res.dst_bytes += it.dst_size
+        elif it.status == "跳过":
+            res.skipped += 1
+            res.src_bytes += it.src_size
+            res.dst_bytes += it.src_size
+        elif it.status == "已取消":
+            res.cancelled += 1
+        else:
+            res.failed += 1
+            res.errors.append((str(it.src), it.message))
+        if progress:
+            try:
+                progress(done, total, it)
+            except Exception:
+                pass
+
+    try:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            pending = {}
+
+            def fill_workers():
+                nonlocal next_index
+                while next_index < total and len(pending) < workers and not stopped():
+                    item = items[next_index]
+                    next_index += 1
+                    future = pool.submit(convert_one, item, opts, out_root,
+                                         should_stop=should_stop, output_paths=paths)
+                    pending[future] = item
+
+            fill_workers()
+            while pending:
+                finished, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in finished:
+                    item = pending.pop(future)
                     try:
-                        progress(done, total, it)
-                    except Exception:
-                        pass
+                        item = future.result()
+                    except Exception as exc:
+                        # 即使某个工作线程抛出意外异常，也继续收集其他文件的结果。
+                        item.status, item.dst, item.dst_size = "失败", "", 0
+                        item.message = f"{type(exc).__name__}: {exc}"
+                    report(item)
+                fill_workers()
 
-    res.elapsed = time.time() - t0
+            for item in items[next_index:]:
+                report(_cancel_item(item))
+    finally:
+        paths.close()
+        res.elapsed = time.monotonic() - t0
     return res
 
 
@@ -674,9 +738,11 @@ def launch_gui() -> int:
     var_progress = tk.DoubleVar(value=0.0)
 
     items: list[Item] = []
-    running = {"flag": False, "stop": False}
+    running = {"flag": False, "scanning": False, "closing": False}
+    stop_event = threading.Event()
     ui_q: "queue.Queue[tuple]" = queue.Queue()
     preview_cache: dict = {}
+    row_ids: dict[int, str] = {}
 
     # ---------- 样式 ----------
     style = ttk.Style()
@@ -714,27 +780,64 @@ def launch_gui() -> int:
         lbl_q.configure(text=str(var_quality.get()))
 
     def update_outdir_state():
-        st = "normal" if var_outmode.get() == "custom" else "disabled"
+        st = "normal" if var_outmode.get() == "custom" and not is_busy() else "disabled"
         ent_out.configure(state=st)
         btn_out.configure(state=st)
 
+    def is_busy():
+        return running["flag"] or running["scanning"]
+
+    def update_format_state():
+        supports_lossless = OUT_FORMATS[var_fmt.get()][0] in ("webp", "png")
+        if not supports_lossless:
+            var_lossless.set(False)
+        chk_lossless.state(["!disabled"] if supports_lossless and not is_busy() else ["disabled"])
+        scale.state(["disabled"] if is_busy() or var_lossless.get() else ["!disabled"])
+
+    def update_controls():
+        busy = is_busy()
+        for control in (btn_add_files, btn_add_dir, btn_remove, btn_clear, btn_run):
+            control.state(["disabled"] if busy else ["!disabled"])
+        btn_retry.state(["!disabled"] if not busy and any(it.status == "失败" for it in items)
+                        else ["disabled"])
+        btn_stop.state(["!disabled"] if busy and not stop_event.is_set() else ["disabled"])
+
+        def set_children(parent):
+            for child in parent.winfo_children():
+                if isinstance(child, (ttk.Entry, ttk.Combobox, ttk.Checkbutton,
+                                      ttk.Radiobutton, ttk.Scale, ttk.Button)):
+                    child.state(["disabled"] if busy else ["!disabled"])
+                set_children(child)
+        for group in (f1, f2, f3):
+            set_children(group)
+        update_outdir_state()
+        update_format_state()
+
     def refresh_list(select_last=False):
-        tree.delete(*tree.get_children())
+        selected = {tree.item(i, "values")[0] for i in tree.selection()}
+        children = tree.get_children()
+        if children:
+            tree.delete(*children)
+        row_ids.clear()
         for i, it in enumerate(items):
             tag = ""
             if it.status == "完成":
                 tag = "ok"
             elif it.status == "失败":
                 tag = "fail"
-            elif it.status == "跳过":
+            elif it.status in ("跳过", "已取消"):
                 tag = "skip"
             tree.insert("", "end", iid=str(i),
                         values=(str(it.src), human_size(it.src_size),
                                 (it.message if it.message else it.status)),
                         tags=(tag,) if tag else ())
+            row_ids[id(it)] = str(i)
+            if str(it.src) in selected:
+                tree.selection_add(str(i))
         if select_last and items:
             tree.see(str(len(items) - 1))
         update_stat()
+        schedule_preview()
 
     def totals():
         total_src = sum(i.src_size for i in items)
@@ -744,9 +847,15 @@ def launch_gui() -> int:
 
     def update_stat():
         n, ts, ds, dd = totals()
-        done = sum(1 for i in items if i.status in ("完成", "跳过"))
+        done = sum(1 for i in items if i.status == "完成")
+        skipped = sum(1 for i in items if i.status == "跳过")
+        cancelled = sum(1 for i in items if i.status == "已取消")
         fail = sum(1 for i in items if i.status == "失败")
         txt = f"共 {n} 张 · 已完成 {done}"
+        if skipped:
+            txt += f" · 跳过 {skipped}"
+        if cancelled:
+            txt += f" · 取消 {cancelled}"
         if fail:
             txt += f" · 失败 {fail}"
         if ds:
@@ -757,6 +866,8 @@ def launch_gui() -> int:
         lbl_stat.configure(text=txt)
 
     def add_files():
+        if is_busy():
+            return
         paths = filedialog.askopenfilenames(
             title="选择图片",
             filetypes=[("图片文件", " ".join(f"*{e}" for e in sorted(READ_EXTS))),
@@ -765,24 +876,35 @@ def launch_gui() -> int:
             add_paths([Path(p) for p in paths])
 
     def add_dir():
+        if is_busy():
+            return
         d = filedialog.askdirectory(title="选择文件夹")
         if d:
             add_paths([Path(d)])
 
     def add_paths(paths: list[Path]):
+        if is_busy():
+            return
+        running["scanning"] = True
+        stop_event.clear()
+        update_controls()
         var_status.set("正在扫描文件…")
-        root.update_idletasks()
-        found = collect_files(paths, recursive=var_recursive.get())
-        have = {str(i.src) for i in items}
-        new = [f for f in found if str(f.src) not in have]
-        items.extend(new)
-        refresh_list(select_last=True)
-        if not new:
-            var_status.set(f"没有新增图片(扫描到 {len(found)} 个，可能已在列表中)")
-        else:
-            var_status.set(f"已添加 {len(new)} 张图片" + (f"，忽略重复 {len(found) - len(new)} 张" if len(found) != len(new) else ""))
+        recursive = var_recursive.get()
+        excluded = [Path(var_outdir.get().strip())] if var_outmode.get() == "custom" and var_outdir.get().strip() else []
+
+        def scan():
+            try:
+                found = collect_files(paths, recursive=recursive, should_stop=stop_event.is_set,
+                                      exclude_dirs=excluded)
+                ui_q.put(("scanned", found))
+            except Exception:
+                ui_q.put(("error", traceback.format_exc()))
+        threading.Thread(target=scan, daemon=True).start()
+        pump()
 
     def remove_selected():
+        if is_busy():
+            return
         sel = sorted((int(i) for i in tree.selection()), reverse=True)
         for i in sel:
             if 0 <= i < len(items):
@@ -791,6 +913,8 @@ def launch_gui() -> int:
         var_status.set(f"已移除 {len(sel)} 项")
 
     def clear_all():
+        if is_busy():
+            return
         if items and not messagebox.askyesno(APP_NAME, "确定清空列表吗？"):
             return
         items.clear()
@@ -884,64 +1008,82 @@ def launch_gui() -> int:
                 pass
         prev_job["id"] = root.after(120, do_preview)
 
+    def clear_preview():
+        canvas.delete("all")
+        cached = preview_cache.pop("thumbnail", None)
+        if cached is not None:
+            cached.close()
+        preview_cache.clear()
+
     def do_preview():
         prev_job["id"] = None
-        if Image is None or ImageTk is None:
+        if running["closing"] or Image is None or ImageTk is None:
             return
         sel = tree.selection()
         canvas.delete("all")
         if not sel:
+            clear_preview()
             lbl_prev_info.configure(text="选中左侧图片即可预览")
             return
         try:
             it = items[int(sel[0])]
-        except (IndexError, ValueError):
+            stat = it.src.stat()
+            key = (_key(it.src), stat.st_mtime_ns, stat.st_size)
+            if preview_cache.get("key") != key:
+                clear_preview()
+                thumbnail, size = load_preview(it.src)
+                preview_cache.update(key=key, thumbnail=thumbnail, size=size)
+            cw = max(canvas.winfo_width() - 20, 1)
+            ch = max(canvas.winfo_height() - 20, 1)
+            with preview_cache["thumbnail"].copy() as thumb:
+                thumb.thumbnail((cw, ch), Image.LANCZOS)
+                canvas_img = ImageTk.PhotoImage(thumb, master=root)
+            preview_cache["img"] = canvas_img
+            canvas.create_image(canvas.winfo_width() // 2, canvas.winfo_height() // 2,
+                                image=canvas_img, anchor="center")
+            w0, h0 = preview_cache["size"]
+            actual = f"\n输出 {human_size(it.dst_size)} · {Path(it.dst).name}" if it.status == "完成" and it.dst else ""
+            lbl_prev_info.configure(
+                text=f"{it.src.name}\n尺寸 {w0}×{h0}　原始大小 {human_size(stat.st_size)}{actual}")
+        except Exception as exc:
+            clear_preview()
+            lbl_prev_info.configure(text="此文件无法预览；其他图片仍可继续转换")
+            canvas.create_text(10, 10, anchor="nw", fill="#ffb4b4",
+                               width=max(canvas.winfo_width() - 20, 100),
+                               text=f"无法预览:\n{exc}")
+
+    def open_output_folder():
+        selected = tree.selection()
+        if selected:
+            item = items[int(selected[0])]
+            folder = Path(item.dst).parent if item.dst else item.src.parent
+        elif var_outmode.get() == "custom" and var_outdir.get().strip():
+            folder = Path(var_outdir.get().strip())
+        elif items:
+            folder = items[0].src.parent
+        else:
+            messagebox.showinfo(APP_NAME, "请先添加图片或选择输出文件夹。")
             return
         try:
-            with Image.open(it.src) as im:
-                w0, h0 = im.size
-                im = im.convert("RGBA") if im.mode in ("P", "LA") else im
-                thumb = im.copy()
-                thumb.thumbnail((900, 900))
-                # 估计压缩后大小
-                est = ""
-                try:
-                    import io as _io
-                    buf = _io.BytesIO()
-                    fmt = OUT_FORMATS.get(var_fmt.get(), ("webp", ".webp"))[0]
-                    if var_lossless.get() and fmt == "webp":
-                        thumb.save(buf, "WEBP", lossless=True, method=4)
-                    elif fmt == "webp":
-                        thumb.save(buf, "WEBP", quality=int(var_quality.get()), method=4)
-                    else:
-                        thumb.save(buf, fmt.upper(), quality=int(var_quality.get()))
-                    est_bytes = buf.tell()
-                    # 按比例换算回原尺寸的粗略估计
-                    px_src = float(w0 * h0) or 1.0
-                    px_th = float(thumb.width * thumb.height) or 1.0
-                    est_bytes = int(est_bytes * (px_src / px_th))
-                    est = f"　预估体积 ≈ {human_size(est_bytes)}"
-                except Exception:
-                    est = ""
-                canvas_img = ImageTk.PhotoImage(thumb)
-                preview_cache["img"] = canvas_img
-                cw = max(canvas.winfo_width(), 10)
-                ch = max(canvas.winfo_height(), 10)
-                canvas.create_image(cw // 2, ch // 2, image=canvas_img, anchor="center")
-                lbl_prev_info.configure(
-                    text=f"{it.src.name}\n尺寸 {w0}×{h0}　原始大小 {human_size(it.src_size)}{est}")
+            folder = folder.resolve()
+            if not folder.is_dir():
+                raise ValueError("输出文件夹尚不存在，请先完成转换。")
+            if sys.platform.startswith("win"):
+                os.startfile(str(folder))
+            else:
+                import subprocess
+                subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", str(folder)])
         except Exception as exc:
-            canvas.create_text(10, 10, anchor="nw", fill="#ffb4b4",
-                               text=f"无法预览:\n{exc}")
+            messagebox.showerror(APP_NAME, f"无法打开文件夹：{exc}")
 
     # ---- 转换 ----
     def build_options() -> Options:
         fmt, ext = OUT_FORMATS.get(var_fmt.get(), ("webp", ".webp"))
         try:
             me = int(str(var_maxedge.get()).strip() or "0")
-        except ValueError:
-            me = 0
-        return Options(
+        except ValueError as exc:
+            raise ValueError("最长边必须为非负整数，0 表示不缩放") from exc
+        opts = Options(
             quality=int(var_quality.get()),
             lossless=bool(var_lossless.get()),
             out_fmt=fmt,
@@ -950,23 +1092,26 @@ def launch_gui() -> int:
             overwrite=bool(var_overwrite.get()),
             flatten=bool(var_flatten.get()),
             bg=var_bg.get() or "#ffffff",
-            max_edge=max(0, me),
+            max_edge=me,
             also_smaller_only=bool(var_smaller_only.get()),
             recursive=bool(var_recursive.get()),
         )
+        validate_options(opts)
+        return opts
 
     def resolve_out_root() -> Path | None:
         """返回输出根目录; None 表示"就在原图旁边"。"""
         if var_outmode.get() == "custom":
-            d = Path(var_outdir.get().strip())
-            if not str(d):
+            value = var_outdir.get().strip()
+            if not value:
                 raise ValueError("请先选择输出文件夹")
+            d = Path(value).resolve()
             d.mkdir(parents=True, exist_ok=True)
             return d
         return None
 
-    def start():
-        if running["flag"]:
+    def start(retry_failed=False):
+        if is_busy():
             return
         if not items:
             messagebox.showinfo(APP_NAME, "请先添加要转换的图片或文件夹。")
@@ -978,98 +1123,128 @@ def launch_gui() -> int:
             messagebox.showerror(APP_NAME, str(exc))
             return
 
-        todo = [i for i in items if i.status != "完成"]
+        todo = [i for i in items if i.status == "失败"] if retry_failed else [
+            i for i in items if i.status not in ("完成", "跳过")]
         if not todo:
-            if not messagebox.askyesno(APP_NAME, "所有图片都已转换完成，要重新转换一遍吗？"):
+            if retry_failed:
+                return
+            if not messagebox.askyesno(APP_NAME, "所有图片都已处理完成，要按当前设置重新转换一遍吗？"):
                 return
             todo = list(items)
-        for i in todo:
-            i.status = "等待"
-            i.message = ""
+        for item in todo:
+            item.status, item.message, item.dst, item.dst_size = "等待", "", "", 0
         refresh_list()
 
         running["flag"] = True
-        running["stop"] = False
-        btn_run.configure(state="disabled")
-        btn_stop.configure(state="normal")
+        stop_event.clear()
+        update_controls()
         var_progress.set(0.0)
+        var_status.set(f"正在转换 0/{len(todo)} …")
 
         def worker():
             try:
-                total = len(todo)
-
-                def prog(done, tot, it):
-                    ui_q.put(("row", it))
-                    ui_q.put(("prog", done, tot))
-
-                # out_root=None 时 convert_one 会把结果写到每张原图旁边
+                def prog(done, total, item):
+                    # 取消项在最终刷新时统一显示，避免大量取消消息堵塞界面。
+                    if item.status != "已取消":
+                        ui_q.put(("row", item, done, total))
                 res = run_batch(todo, opts, out_root, progress=prog,
-                                should_stop=lambda: running["stop"])
-                ui_q.put(("done", res, total))
+                                should_stop=stop_event.is_set)
+                ui_q.put(("done", res, len(todo)))
             except Exception:
                 ui_q.put(("error", traceback.format_exc()))
-
         threading.Thread(target=worker, daemon=True).start()
         pump()
 
+    def finish_close():
+        if prev_job["id"]:
+            root.after_cancel(prev_job["id"])
+            prev_job["id"] = None
+        clear_preview()
+        root.destroy()
+
     def pump():
+        changed = False
         try:
-            while True:
+            # 每次最多更新一小批，给重绘、停止按钮和窗口事件留出处理时间。
+            for _ in range(150):
                 msg = ui_q.get_nowait()
                 kind = msg[0]
                 if kind == "row":
-                    it = msg[1]
-                    for idx, cand in enumerate(items):
-                        if cand is it or (cand.src == it.src):
-                            try:
-                                tag = {"完成": "ok", "失败": "fail", "跳过": "skip"}.get(it.status, "")
-                                tree.item(str(idx), values=(str(it.src), human_size(it.src_size),
-                                                            it.message or it.status),
-                                          tags=(tag,) if tag else ())
-                            except Exception:
-                                pass
-                            break
-                    update_stat()
-                elif kind == "prog":
-                    done, tot = msg[1], msg[2]
-                    var_progress.set(done / max(1, tot) * 100.0)
-                    var_status.set(f"正在转换 {done}/{tot} …")
+                    item, done, total = msg[1:]
+                    row_id = row_ids.get(id(item))
+                    if row_id is not None and tree.exists(row_id):
+                        tag = {"完成": "ok", "失败": "fail", "跳过": "skip"}.get(item.status, "")
+                        tree.item(row_id, values=(str(item.src), human_size(item.src_size),
+                                                  item.message or item.status),
+                                  tags=(tag,) if tag else ())
+                    changed = True
+                    var_progress.set(done / max(1, total) * 100.0)
+                    if not stop_event.is_set():
+                        var_status.set(f"正在转换 {done}/{total} …")
+                elif kind == "scanned":
+                    running["scanning"] = False
+                    if running["closing"]:
+                        finish_close()
+                        return
+                    found = msg[1]
+                    have = {_key(item.src) for item in items}
+                    new = [item for item in found if _key(item.src) not in have]
+                    items.extend(new)
+                    refresh_list(select_last=True)
+                    prefix = "扫描已停止，" if stop_event.is_set() else ""
+                    var_status.set(f"{prefix}已添加 {len(new)} 张图片，忽略重复 {len(found) - len(new)} 张")
+                    update_controls()
+                    return
                 elif kind == "done":
-                    res, total = msg[1], msg[2]
+                    res, total = msg[1:]
                     running["flag"] = False
-                    btn_run.configure(state="normal")
-                    btn_stop.configure(state="disabled")
-                    var_progress.set(100.0)
-                    verb = "已取消" if running["stop"] else "完成"
-                    summary = (f"{verb} · 成功 {res.ok} · 跳过 {res.skipped} · 失败 {res.failed} · "
-                               f"耗时 {res.elapsed:.1f}s")
-                    if res.src_bytes:
-                        save = (1 - res.dst_bytes / res.src_bytes) * 100.0
-                        summary += f" · {human_size(res.src_bytes)} → {human_size(res.dst_bytes)} (省 {save:.0f}%)"
+                    if running["closing"]:
+                        finish_close()
+                        return
+                    processed = res.ok + res.skipped + res.failed
+                    var_progress.set(processed / max(1, total) * 100.0)
+                    verb = "已停止" if res.cancelled else "完成"
+                    summary = (f"{verb} · 成功 {res.ok} · 跳过 {res.skipped} · 失败 {res.failed}"
+                               f" · 取消 {res.cancelled} · 耗时 {res.elapsed:.1f}s")
                     var_status.set(summary)
                     refresh_list()
-                    var_status.set(summary)
+                    update_controls()
                     if res.errors:
                         detail = "\n".join(f"· {Path(p).name}: {m}" for p, m in res.errors[:12])
                         if len(res.errors) > 12:
                             detail += f"\n… 另有 {len(res.errors) - 12} 个失败"
-                        messagebox.showwarning(APP_NAME, f"有 {res.failed} 张图片转换失败:\n\n{detail}")
+                        messagebox.showwarning(APP_NAME, f"有 {res.failed} 张图片转换失败，可点击「重试失败」:\n\n{detail}")
                     return
                 elif kind == "error":
-                    running["flag"] = False
-                    btn_run.configure(state="normal")
-                    btn_stop.configure(state="disabled")
-                    var_status.set("发生错误")
+                    running["flag"] = running["scanning"] = False
+                    if running["closing"]:
+                        finish_close()
+                        return
+                    update_controls()
+                    var_status.set("发生错误，可以调整设置后重试")
                     messagebox.showerror(APP_NAME, msg[1][-2000:])
                     return
         except queue.Empty:
             pass
-        if running["flag"]:
+        if changed:
+            update_stat()
+        if is_busy():
             root.after(80, pump)
 
     def stop():
-        running["stop"] = True
-        var_status.set("正在停止…")
+        if not is_busy():
+            return
+        stop_event.set()
+        btn_stop.state(["disabled"])
+        var_status.set("正在停止，等待当前图片处理结束…")
+
+    def on_close():
+        if is_busy():
+            running["closing"] = True
+            stop()
+            var_status.set("正在停止并清理临时文件，完成后自动关闭…")
+        else:
+            finish_close()
 
 
     # ---------- 界面布局 ----------
@@ -1090,6 +1265,8 @@ def launch_gui() -> int:
     btn_run.pack(side="right", padx=(6, 0))
     btn_stop = ttk.Button(bar, text="■ 停止", command=lambda: stop(), state="disabled")
     btn_stop.pack(side="right")
+    btn_retry = ttk.Button(bar, text="重试失败", command=lambda: start(retry_failed=True), state="disabled")
+    btn_retry.pack(side="right", padx=(0, 6))
     # 开源仓库入口
     btn_about = ttk.Button(bar, text="⭐ 关于 / 项目主页", command=lambda: show_about_safe())
     btn_about.pack(side="right", padx=(0, 6))
@@ -1138,6 +1315,7 @@ def launch_gui() -> int:
     canvas.pack(fill="both", expand=True)
     lbl_prev_info = ttk.Label(tab_prev, text="选中左侧图片即可预览", justify="left", anchor="w")
     lbl_prev_info.pack(fill="x", pady=(8, 0))
+    ttk.Button(tab_prev, text="打开输出文件夹", command=open_output_folder).pack(anchor="w", pady=(6, 0))
     canvas.bind("<Configure>", lambda e: schedule_preview())
 
     # 设置页
@@ -1147,6 +1325,7 @@ def launch_gui() -> int:
     cmb_fmt = ttk.Combobox(row, textvariable=var_fmt, values=list(OUT_FORMATS.keys()),
                            state="readonly", width=18)
     cmb_fmt.pack(side="left")
+    cmb_fmt.bind("<<ComboboxSelected>>", lambda e: update_format_state())
     row2 = ttk.Frame(f1); row2.pack(fill="x", pady=(8, 0))
     ttk.Label(row2, text="质量", width=10).pack(side="left")
     scale = ttk.Scale(row2, from_=1, to=100, variable=var_quality,
@@ -1154,9 +1333,10 @@ def launch_gui() -> int:
     scale.pack(side="left", fill="x", expand=True)
     lbl_q = ttk.Label(row2, text="80", width=4)
     lbl_q.pack(side="left", padx=(6, 0))
-    ttk.Checkbutton(f1, text="无损模式(文件更大，但画质 100% 保留)",
-                    variable=var_lossless).pack(anchor="w", pady=(8, 0))
-    ttk.Checkbutton(f1, text="智能模式：若转换后反而更大就保留原图（推荐，避免二次压缩变差）",
+    chk_lossless = ttk.Checkbutton(f1, text="无损模式（仅 WebP / PNG）",
+                                    variable=var_lossless, command=update_format_state)
+    chk_lossless.pack(anchor="w", pady=(8, 0))
+    ttk.Checkbutton(f1, text="智能模式：仅保存体积更小的结果",
                     variable=var_smaller_only).pack(anchor="w")
 
     f2 = section(tab_set, "输出位置")
@@ -1170,7 +1350,7 @@ def launch_gui() -> int:
     btn_out = ttk.Button(r, text="浏览…", command=lambda: pick_outdir(), width=8)
     btn_out.pack(side="left")
     ttk.Checkbutton(f2, text="保留子文件夹结构", variable=var_keep).pack(anchor="w", pady=(8, 0))
-    ttk.Checkbutton(f2, text="覆盖已存在的同名文件(默认自动改名，绝不丢文件)",
+    ttk.Checkbutton(f2, text="覆盖已有输出（始终保护本批原图）",
                     variable=var_overwrite).pack(anchor="w")
 
     f3 = section(tab_set, "图像处理")
@@ -1223,14 +1403,16 @@ def launch_gui() -> int:
 
 
     # 控件已就绪, 现在才能安全地初始化它们的状态
-    update_outdir_state()
+    update_controls()
     update_q_label()
     refresh_list()
 
     # 快捷键
     root.bind("<Control-o>", lambda e: add_files())
     root.bind("<Control-O>", lambda e: add_files())
-    root.bind("<Delete>", lambda e: remove_selected())
+    tree.bind("<Delete>", lambda e: remove_selected())
+    tree.bind("<Control-a>", lambda e: tree.selection_set(tree.get_children()))
+    root.bind("<Escape>", lambda e: stop())
     root.bind("<F5>", lambda e: start())
     root.bind("<Control-u>", lambda e: show_about_safe())
     root.bind("<Control-U>", lambda e: show_about_safe())
@@ -1240,6 +1422,7 @@ def launch_gui() -> int:
     if not dropped:
         var_status.set("提示: 也可直接点「添加图片」/「添加文件夹」选择文件")
 
+    root.protocol("WM_DELETE_WINDOW", on_close)
     root.mainloop()
     return 0
 
@@ -1263,9 +1446,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("-q", "--quality", type=int, default=80, help="质量 1-100 (默认 80)")
     p.add_argument("-f", "--format", default="webp",
                    choices=["webp", "png", "jpeg", "jpg", "avif"], help="输出格式(默认 webp)")
-    p.add_argument("--lossless", action="store_true", help="无损编码(体积更大)")
+    p.add_argument("--lossless", action="store_true", help="无损编码，仅支持 WebP / PNG")
     p.add_argument("--keep", action="store_true", help="保留子文件夹结构")
-    p.add_argument("--overwrite", action="store_true", help="覆盖同名文件")
+    p.add_argument("--overwrite", action="store_true", help="覆盖已有输出，始终保护本批输入文件")
     p.add_argument("--flatten", action="store_true", help="透明区域填充背景色")
     p.add_argument("--bg", default="#ffffff", help="填充背景色(默认 #ffffff)")
     p.add_argument("--max-edge", type=int, default=0, help="限制最长边像素(0=不缩放)")
@@ -1273,6 +1456,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-recursive", action="store_true", help="不递归子文件夹")
     p.add_argument("-j", "--workers", type=int, default=0, help="并发线程数(默认自动)")
     p.add_argument("--json", action="store_true", help="输出 JSON 结果")
+    p.add_argument("--selftest", nargs="?", const="", metavar="REPORT",
+                   help="环境与转换自检，可指定报告文件路径")
     p.add_argument("-v", "--version", action="version", version=f"{APP_NAME} {APP_VERSION}")
     return p
 
@@ -1281,6 +1466,9 @@ def run_cli(argv: list[str]) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
+    if args.selftest is not None:
+        return run_selftest(Path(args.selftest) if args.selftest else None)
+
     if not args.input:
         parser.print_help()
         return 2
@@ -1288,7 +1476,7 @@ def run_cli(argv: list[str]) -> int:
     fmt = "jpeg" if args.format == "jpg" else args.format
     ext = {"webp": ".webp", "png": ".png", "jpeg": ".jpg", "avif": ".avif"}[fmt]
     opts = Options(
-        quality=max(1, min(100, args.quality)),
+        quality=args.quality,
         lossless=args.lossless,
         out_fmt=fmt,
         out_ext=ext,
@@ -1296,20 +1484,26 @@ def run_cli(argv: list[str]) -> int:
         overwrite=args.overwrite,
         flatten=args.flatten,
         bg=args.bg,
-        max_edge=max(0, args.max_edge),
+        max_edge=args.max_edge,
         also_smaller_only=args.smaller_only,
-        workers=max(0, args.workers),
+        workers=args.workers,
         recursive=not args.no_recursive,
     )
 
+    try:
+        validate_options(opts)
+        if args.outdir is not None and not args.outdir.strip():
+            raise ValueError("输出文件夹不能为空")
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    out_root = Path(args.outdir).resolve() if args.outdir else None
     roots = [Path(x) for x in args.input]
-    items = collect_files(roots, recursive=opts.recursive)
+    items = collect_files(roots, recursive=opts.recursive,
+                          exclude_dirs=[out_root] if out_root is not None else [])
     if not items:
         print("没有找到可转换的图片。", file=sys.stderr)
         return 1
-
-    # out_root = None 表示原地输出(写在每张原图旁边)
-    out_root = Path(args.outdir) if args.outdir else None
 
     quiet = args.json
     if not quiet:
@@ -1322,20 +1516,25 @@ def run_cli(argv: list[str]) -> int:
     def prog(done, total, it):
         if quiet:
             return
-        mark = {"完成": "✓", "跳过": "–", "失败": "✗"}.get(it.status, "?")
+        mark = {"完成": "✓", "跳过": "–", "失败": "✗", "已取消": "·"}.get(it.status, "?")
         print(f"[{done:>4}/{total}] {mark} {it.src.name:<40.40} {it.message}")
 
     def do(res: Result) -> int:
         if args.json:
             print(json.dumps({
                 "total": len(items), "ok": res.ok, "skipped": res.skipped,
-                "failed": res.failed, "src_bytes": res.src_bytes,
+                "failed": res.failed, "cancelled": res.cancelled, "src_bytes": res.src_bytes,
                 "dst_bytes": res.dst_bytes, "elapsed": round(res.elapsed, 2),
                 "errors": [{"file": p, "error": m} for p, m in res.errors],
+                "items": [{"source": str(it.src), "output": it.dst or None,
+                           "status": {"完成": "ok", "跳过": "skipped", "失败": "failed",
+                                      "已取消": "cancelled"}[it.status],
+                           "src_bytes": it.src_size, "dst_bytes": it.dst_size,
+                           "message": it.message} for it in items],
             }, ensure_ascii=False, indent=2))
         else:
             print("-" * 64)
-            line = (f"完成: 成功 {res.ok} · 跳过 {res.skipped} · 失败 {res.failed} · "
+            line = (f"完成: 成功 {res.ok} · 跳过 {res.skipped} · 失败 {res.failed} · 取消 {res.cancelled} · "
                     f"耗时 {res.elapsed:.1f}s")
             if res.src_bytes:
                 save = (1 - res.dst_bytes / res.src_bytes) * 100.0
@@ -1343,9 +1542,18 @@ def run_cli(argv: list[str]) -> int:
             print(line)
             for p, m in res.errors[:20]:
                 print(f"  ! {p}: {m}", file=sys.stderr)
-        return 0 if res.failed == 0 else 3
+        return 130 if res.cancelled else (0 if res.failed == 0 else 3)
 
-    res = run_batch(items, opts, out_root, progress=prog)
+    import signal
+    stop_event = threading.Event()
+    handle_signal = threading.current_thread() is threading.main_thread()
+    if handle_signal:
+        previous_handler = signal.signal(signal.SIGINT, lambda *_: stop_event.set())
+    try:
+        res = run_batch(items, opts, out_root, progress=prog, should_stop=stop_event.is_set)
+    finally:
+        if handle_signal:
+            signal.signal(signal.SIGINT, previous_handler)
     return do(res)
 
 
@@ -1353,7 +1561,7 @@ def run_cli(argv: list[str]) -> int:
 # main
 # ----------------------------------------------------------------------------
 
-def run_selftest() -> int:
+def run_selftest(report_path: Path | None = None) -> int:
     """自检: 在临时目录里跑一遍完整流程, 结果写入文件。
 
     打包成窗口程序后没有控制台, 这是验证 exe 是否健康的最可靠方式。
@@ -1450,11 +1658,13 @@ def run_selftest() -> int:
     text = "\n".join(lines)
     # 输出: 指定文件 > exe 同目录 > 用户主目录
     targets = []
-    if len(sys.argv) > 2:
-        targets.append(Path(sys.argv[2]))
+    if report_path is not None:
+        targets.append(report_path)
     if getattr(sys, "frozen", False):
-        targets.append(Path(sys.executable).parent / f"{APP_NAME}_自检结果.txt")
-    targets.append(Path.home() / f"{APP_NAME}_自检结果.txt")
+        targets.append(Path(sys.executable).parent / f"{APP_NAME}_selftest.txt")
+    else:
+        targets.append(Path.cwd() / f"{APP_NAME}_selftest.txt")
+    targets.append(Path.home() / f"{APP_NAME}_selftest.txt")
 
     for t in targets:
         try:
@@ -1480,20 +1690,61 @@ def fatal_console_hint() -> None:
         pass
 
 
+def restore_cli_streams() -> None:
+    """窗口版 EXE 的 CLI 保留管道重定向；交互调用时连接父控制台。"""
+    if os.name != "nt":
+        return
+    # 重定向时标准流可能仍存在，但编码是系统 GBK，无法输出 ✓ 或任意文件名。
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    import ctypes
+    from ctypes import wintypes
+    import msvcrt
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetStdHandle.argtypes = [wintypes.DWORD]
+    kernel.GetStdHandle.restype = wintypes.HANDLE
+    kernel.AttachConsole.argtypes = [wintypes.DWORD]
+    kernel.AttachConsole.restype = wintypes.BOOL
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.DuplicateHandle.argtypes = [wintypes.HANDLE, wintypes.HANDLE, wintypes.HANDLE,
+                                      ctypes.POINTER(wintypes.HANDLE), wintypes.DWORD,
+                                      wintypes.BOOL, wintypes.DWORD]
+    kernel.DuplicateHandle.restype = wintypes.BOOL
+    handles = {"stdout": kernel.GetStdHandle(-11), "stderr": kernel.GetStdHandle(-12)}
+    invalid = (None, 0, wintypes.HANDLE(-1).value)
+    if any(handle in invalid for handle in handles.values()):
+        kernel.AttachConsole(-1)
+    process = kernel.GetCurrentProcess()
+    for name, identifier in (("stdout", -11), ("stderr", -12)):
+        if getattr(sys, name) is not None:
+            continue
+        handle = handles[name]
+        if handle in invalid:
+            handle = kernel.GetStdHandle(identifier)
+        duplicate = wintypes.HANDLE()
+        if handle not in invalid and kernel.DuplicateHandle(process, handle, process,
+                                                             ctypes.byref(duplicate), 0, False, 2):
+            fd = msvcrt.open_osfhandle(duplicate.value, os.O_WRONLY | os.O_BINARY)
+            setattr(sys, name, os.fdopen(fd, "w", encoding="utf-8", errors="replace", buffering=1))
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
-        if "--selftest" in argv:
-            return run_selftest()
-        if "--cli" in argv or "-i" in argv or "--input" in argv:
-            return run_cli(argv)
-        if argv and any(a in ("-h", "--help", "-v", "--version") for a in argv):
+        if argv:
+            restore_cli_streams()
             return run_cli(argv)
         return launch_gui()
     except Exception:
         fatal_console_hint()
         if sys.stderr is not None:
             traceback.print_exc()
+        if argv:
+            return 1
         try:
             import tkinter.messagebox as mb
             mb.showerror(APP_NAME, "程序发生错误:\n\n" + traceback.format_exc()[-1500:])

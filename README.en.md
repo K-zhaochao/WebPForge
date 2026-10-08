@@ -47,14 +47,16 @@ contributions adding i18n are welcome.
 
 | Feature | Notes |
 |---|---|
-| Batch conversion | Add hundreds or thousands of images; converts in parallel |
+| Batch conversion | Background folder scanning, bounded parallel tasks, progress in completion order |
 | Drag & drop | Drop files/folders straight onto the window (Windows) |
 | Quality control | Adjustable 1–100, plus a true **lossless** mode |
 | Transparency kept | PNG alpha channels are preserved |
 | Auto-rotate | Applies EXIF orientation from phone photos |
 | Animation kept | Animated GIF → **animated WebP**, frames and loop intact |
-| Smart mode | If the result would be *larger*, the original is kept — no generation loss |
-| Never overwrites | Name clashes become `name(1).webp`; your files are never lost |
+| Smart mode | Skips results that are not smaller, without creating an output; on by default in the GUI, opt in with `--smaller-only` in the CLI |
+| Source protection | Auto-renames by default; optional overwrite replaces existing outputs while protecting every input in the batch |
+| Stop and retry | Resume cancelled tasks or retry only failed files; one bad input does not abort the batch |
+| Preview | Correct photo orientation, fit-to-window thumbnails, actual output size after conversion |
 | Keep structure | Optionally recreates the sub-folder hierarchy |
 | Resize limit | Cap the longest edge at N pixels for the whole batch |
 | Unicode-safe | Chinese (and any non-ASCII) file names and paths work |
@@ -62,6 +64,10 @@ contributions adding i18n are welcome.
 
 **Input**: JPG / JPEG / PNG / BMP / GIF / TIFF / TGA / ICO / WebP / AVIF and anything else Pillow can read.
 **Output**: **WebP (default)**, plus PNG / JPEG / AVIF.
+
+AVIF encoding depends on your Pillow installation; use a recent Python and Pillow.
+Some recognized extensions, including HEIC and RAW, require extra Pillow plugins.
+Unsupported or corrupt files are reported individually.
 
 ---
 
@@ -81,19 +87,34 @@ contributions adding i18n are welcome.
 └────────────────────────────────────────────────────────────┘
 ```
 
+### Stop, resume, and retry
+
+- **Stop** or `Esc` stops new tasks, waits for active encoders, and cleans temporary files.
+- Cancelled files have a separate status and count. They do not inflate savings or force progress to 100%.
+- **Start** resumes failed or cancelled items; **Retry failed** processes only failures.
+- If everything has completed or been smart-skipped, Start asks before processing the whole list again.
+- Adding, removing, clearing, and changing conversion settings are locked during scanning/conversion. Closing the window stops work before exiting.
+- **Open output folder** in the preview tab opens the selected output directory, or the source directory when no output was created.
+
+Folder scans exclude a nested custom output directory. Existing queue entries are kept;
+explicitly selecting that directory or its files is still supported.
+
 ### Recommended settings
 
 | Option | Recommendation |
 |---|---|
 | **Format** | Keep `WebP`; switch to JPEG/PNG only for legacy software |
 | **Quality** | **75–85** is the sweet spot for the web; 90–95 for archiving |
-| **Lossless** | Only when you need pixel-exact output (much larger files) |
-| **Smart mode** | **Leave it on** — prevents re-compressing already-optimised images |
+| **Lossless** | WebP / PNG only; disables PNG palette quantization. Unavailable for JPEG / AVIF |
+| **Smart mode** | Keeps only smaller results; turn off if every input must produce a target-format file |
 | **Output location** | Defaults to *next to the original*; pick a separate folder for big batches |
 | **Keep sub-folder structure** | Enable when processing a whole project tree |
-| **Overwrite same-name files** | **Off** by default (auto-renaming is safer) |
+| **Overwrite existing outputs** | **Off** by default; input files and conflicting outputs within a batch still get unique names |
 | **Flatten transparency** | Needed only when converting to JPEG |
 | **Max edge** | `0` = no resize; e.g. `1920` to cap the width of the whole batch |
+
+PNG uses palette quantization when quality is below 100 and lossless is off.
+Invalid colors, dimensions, and CLI numeric options are reported before conversion.
 
 ---
 
@@ -121,20 +142,27 @@ python webp_converter.py --cli -i ./photos -o ./out -q 80
 |---|---|
 | `--cli` | Command-line mode (don't open the GUI) |
 | `-i, --input` | Input files / folders / globs (one or more) |
-| `-o, --outdir` | Output directory (default: next to each source file) |
+| `-o, --outdir` | Output directory (omitted: next to the source; `-o .`: current working directory) |
 | `-q, --quality` | Quality 1–100, default 80 |
 | `-f, --format` | Output format: `webp` (default) / `png` / `jpeg` / `avif` |
-| `--lossless` | Lossless encoding |
+| `--lossless` | Lossless WebP / PNG; rejected for JPEG / AVIF |
 | `--keep` | Preserve sub-folder structure |
-| `--overwrite` | Overwrite same-name files (default: auto-rename) |
+| `--overwrite` | Replace existing outputs while protecting all batch inputs and concurrent outputs |
 | `--flatten` | Fill transparent areas with a background colour |
 | `--bg` | Fill colour, default `#ffffff` |
 | `--max-edge` | Cap the longest edge in pixels; 0 = no resize |
 | `--smaller-only` | Only write the result if it is smaller |
 | `--no-recursive` | Do not descend into sub-folders |
 | `-j, --workers` | Worker threads (default: automatic) |
-| `--json` | Machine-readable JSON output |
-| `--selftest` | Verify the environment and conversion pipeline |
+| `--json` | JSON summary and per-file output paths, status, sizes, and errors |
+| `--selftest [REPORT]` | Verify the environment and conversion pipeline; optional report path |
+
+`Ctrl+C` requests cancellation and cleans unpublished results.
+Exit codes: `0` success/smart skips, `1` no inputs or environment error, `2` invalid arguments,
+`3` file failures, `130` cancelled items.
+JSON retains the original summary fields and adds `cancelled` and `items`.
+Per-file status is `ok`, `skipped`, `failed`, or `cancelled`; `output` is `null` when nothing was produced.
+On Windows, CLI stdout and stderr use UTF-8 and support pipes and file redirection.
 
 ---
 
@@ -186,7 +214,7 @@ pyinstaller --clean --noconfirm build.spec
 
 ## Releasing
 
-Push a version tag and GitHub Actions builds all three platforms and creates the Release:
+Push a version tag and GitHub Actions builds Windows and Apple Silicon and creates the Release:
 
 ```bash
 git tag v1.0.0
@@ -210,6 +238,8 @@ the version and download file names are substituted automatically at publish tim
 ```
 WebPForge/
 ├── webp_converter.py            # everything: GUI + engine + CLI
+├── CHANGELOG.md                 # changes and validation notes
+├── tests/                       # conversion, file safety, CLI, and real GUI tests
 ├── build.spec                   # PyInstaller configuration
 ├── build_windows.ps1            # one-shot Windows build (self-tests the output)
 ├── build_macos.sh               # one-shot macOS build (.app + .dmg)
@@ -218,6 +248,7 @@ WebPForge/
 ├── assets/                      # icons (generated by make_icon.py)
 ├── .github/
 │   ├── workflows/
+│   │   ├── test.yml             # Windows / Linux regression tests
 │   │   ├── build.yml            # auto build Windows + Apple Silicon, publish Release
 │   │   └── build-intel.yml      # manual Intel build (keeps releases fast)
 │   └── RELEASE_BODY.md          # release notes template
@@ -227,6 +258,7 @@ WebPForge/
     ├── stress_test.py           # concurrency stress test
     ├── test_gui_flow.py         # GUI interaction chain test
     ├── test_gui_launch.py       # GUI launch test
+    ├── test_packaged.py         # EXE self-test, JSON redirection, all output formats
     ├── diag_gui.py              # GUI diagnostics
     └── find_window.py           # locate the app window (verifies packaged output)
 ```
@@ -236,11 +268,19 @@ WebPForge/
 ## Testing
 
 ```bash
+python -m unittest discover -s tests -v      # all regressions (GUI needs a display)
 python webp_converter.py --selftest          # environment + conversion self-test
 python tools/make_testdata.py _testdata      # create test images
 python tools/stress_test.py _stress          # concurrency test (72 clashing names)
-python tools/test_gui_flow.py                # GUI interaction chain
+python tools/test_gui_flow.py               # real GUI: preview, stop, resume, retry
+python tools/test_gui_launch.py             # GUI creation and normal shutdown on the main thread
+python tools/test_packaged.py dist/WebPForge.exe  # packaged checks (requires AVIF-capable Pillow)
 ```
+
+Regression tests create and clean their own temporary images; `_testdata` is not required.
+On headless Linux, run `xvfb-run -a python -m unittest discover -s tests -v`.
+GUI tests explicitly skip when no display is available. The test workflow covers
+Windows / Linux and Python 3.8 / 3.13.
 
 ---
 
@@ -253,10 +293,13 @@ The source was probably already WebP, or an aggressively compressed JPEG. Keep *
 WebP **does** support transparency and it is preserved by default. Transparency is only lost if you enable *flatten transparency* or choose JPEG as the output format.
 
 **Do animated GIFs become static?**
-No. Converting to WebP keeps every frame, per-frame duration and the loop count.
+WebP keeps every frame, duration, and loop setting. A GIF without loop metadata plays once.
+PNG / JPEG / AVIF currently retain only the first frame; the result message states this.
 
 **Will it overwrite my originals?**
-Never. The tool only *adds* `.webp` files; originals are never deleted or modified. Name clashes become `name(1).webp`.
+By default the tool only adds files; clashes become `name(1).webp`. Even with overwrite enabled,
+every input in the current batch is protected. Existing outputs are replaced only after successful
+encoding; failures and cancellation preserve them.
 
 **How long does a few thousand images take?**
 The app scales across your CPU cores automatically. 1,000 typical photos usually take 1–3 minutes.

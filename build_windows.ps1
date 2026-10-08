@@ -82,11 +82,12 @@ Write-Host "[.] Executable: dist\$AppName.exe  ($sizeMB MB)" -ForegroundColor Gr
 
 # ---------- 6. self-test the produced binary ----------
 Write-Host "[.] Running self-test on the packaged executable ..."
-$p = Start-Process -FilePath $Exe -ArgumentList "--selftest" -PassThru -Wait
+$p = Start-Process -FilePath $Exe -ArgumentList "--selftest" -WindowStyle Hidden -PassThru -Wait
 if ($p.ExitCode -eq 0) {
     Write-Host "[.] Self-test passed" -ForegroundColor Green
 } else {
-    Write-Host "[!] Self-test returned $($p.ExitCode) - see WebPForge_selftest.txt next to the exe" -ForegroundColor Yellow
+    Write-Host "[X] Self-test returned $($p.ExitCode) - see WebPForge_selftest.txt next to the exe" -ForegroundColor Red
+    exit 1
 }
 
 # ---------- 7. release zip ----------
