@@ -25,9 +25,25 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== self.location.origin) return;
   // Never cache local uploads, blobs, arbitrary paths, API calls or downloads.
-  if (request.mode === "navigate" && url.pathname === new URL(APP_ROOT).pathname) {
-    event.respondWith(caches.open(CACHE_NAME).then(async (cache) =>
-      (await cache.match(APP_ROOT)) || fetch(request)));
+  if (request.mode === "navigate" && [new URL(APP_ROOT).pathname, new URL("index.html", APP_ROOT).pathname].includes(url.pathname)) {
+    // Fresh HTML discovers the next fingerprinted worker; cached HTML remains
+    // available offline. Static resources are immutable, content-addressed URLs.
+    event.respondWith((async () => {
+      let timer;
+      try {
+        const response = await Promise.race([
+          fetch(request, { cache: "no-cache" }),
+          new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("Navigation timeout")), 3500); }),
+        ]);
+        if (response.ok) return response;
+        throw new Error("Navigation unavailable");
+      } catch {
+        const cache = await caches.open(CACHE_NAME);
+        const cached = await cache.match(APP_ROOT);
+        if (cached) return cached;
+        return fetch(request);
+      } finally { clearTimeout(timer); }
+    })());
     return;
   }
   if (!PUBLIC_URLS.has(url.href)) return;

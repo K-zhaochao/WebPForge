@@ -22,16 +22,19 @@ async function workerHarness() {
   let precache, skipped = false, claimed = false;
   const cache = { addAll: async (urls) => { precache = urls; }, match: async (request) => cached.get(typeof request === "string" ? request : request.url) };
   const context = {
-    URL, Set,
+    URL, Set, setTimeout, clearTimeout,
     self: { location: new URL("https://webp.royi.net/sw.js"), addEventListener: (name, fn) => { handlers[name] = fn; },
             skipWaiting: () => { skipped = true; }, clients: { claim: async () => { claimed = true; } } },
     caches: { open: async (name) => { buckets.set(name, cache); return cache; }, keys: async () => [...buckets.keys()], delete: async (key) => buckets.delete(key) },
-    fetch: async (request) => `network:${request.url}`,
+    fetch: async (request) => {
+      if (request.mode === "navigate") throw new Error("Offline fixture");
+      return `network:${request.url}`;
+    },
   };
   let script = await readFile(new URL("../site/sw.js", import.meta.url), "utf8");
   script = script.replace("@@CACHE_VERSION@@", "test-version").replace("@@PRECACHE_URLS@@", '["./", "./app.js"]');
   vm.runInNewContext(script, context);
-  return { handlers, buckets, status: () => ({ precache, skipped, claimed }) };
+  return { handlers, buckets, context, status: () => ({ precache, skipped, claimed }) };
 }
 
 test("PWA installation caches public files and waits for explicit update", async () => {
@@ -77,4 +80,13 @@ test("worker activation removes only old application caches", async () => {
   assert.equal(harness.buckets.has("webpforge-old"), false);
   assert.equal(harness.buckets.has("unrelated-app"), true);
   assert.equal(harness.status().claimed, true);
+});
+
+test("online navigation discovers fresh HTML instead of pinning an old worker forever", async () => {
+  const harness = await workerHarness();
+  const response = { ok: true, content: "fresh-version-html" };
+  harness.context.fetch = async () => response;
+  let task;
+  harness.handlers.fetch({ request: { method: "GET", mode: "navigate", url: "https://webp.royi.net/" }, respondWith: (value) => { task = value; } });
+  assert.equal(await task, response);
 });
