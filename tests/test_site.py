@@ -43,6 +43,8 @@ class SiteTests(unittest.TestCase):
         self.assertNotIn("@@", worker)
         urls = json.loads(re.search(r"const PRECACHE = (.*);", worker).group(1))
         self.assertTrue(any(re.fullmatch(r"\./pwa\.[a-f0-9]{16}\.js", url) for url in urls))
+        for module in ("preferences", "interface", "messages"):
+            self.assertTrue(any(re.fullmatch(r"\./" + module + r"\.[a-f0-9]{16}\.js", url) for url in urls))
         self.assertTrue(any(re.fullmatch(r"\./assets/heading-sc\.[a-f0-9]{16}\.woff2", url) for url in urls))
         worker_url = re.search(r'name="webpforge-worker" content="(.*?)"', html).group(1)
         self.assertTrue((output / worker_url).is_file())

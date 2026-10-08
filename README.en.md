@@ -11,7 +11,7 @@
 
 [中文](README.md) · **English**
 
-[**Official website & live WebP demo (Chinese)**](https://webp.royi.net/)
+[**Official website & live WebP converter (Chinese / English)**](https://webp.royi.net/)
 
 Drop in a pile of JPG / PNG / BMP / GIF / TIFF files, hit **Start**, and get smaller WebP images.
 
@@ -22,6 +22,8 @@ Drop in a pile of JPG / PNG / BMP / GIF / TIFF files, hit **Start**, and get sma
 ## Download
 
 The [official website](https://webp.royi.net/) provides release downloads and a working browser demo.
+Switch between Chinese and English, or light and dark themes, from the header on desktop and mobile.
+Your preferences are remembered; the first visit follows your system theme.
 The demo converts static JPEG, PNG and WebP images locally, with a quality slider, visual comparison and downloadable output.
 Install the PWA on Android through the browser menu, or on iOS through Safari → Share → Add to Home Screen. This is an installable web app, not an APK or App Store native app. Offline conversion works after the initial cache finishes.
 Images are never uploaded. For batches, animation and lossless encoding, use the desktop application.

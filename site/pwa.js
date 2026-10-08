@@ -1,3 +1,4 @@
+import { setText } from "./interface.js";
 import { detectPlatform, installInstructions } from "./platform.js";
 
 const button = document.querySelector("#install-app");
@@ -13,21 +14,21 @@ const messages = {
   ios: "当前设备：iPhone / iPad。推荐在线转换，或用 Safari 添加到主屏幕。",
   other: "在线版支持手机和电脑；Linux 等系统可使用在线版或浏览器轻应用。",
 };
-recommendation.textContent = messages[platform];
+setText(recommendation, messages[platform]);
 document.querySelector(`[data-platform="${platform}"]`)?.classList.add("is-recommended");
-document.querySelector("#install-instructions").textContent = installInstructions(platform);
+setText(document.querySelector("#install-instructions"), installInstructions(platform));
 let installPrompt = null;
 let registration = null;
 let updateRequested = false;
 
 function syncInstall() {
-  button.textContent = installed() ? "已安装 · 查看使用说明" : installPrompt ? "安装 WebPForge" : "安装到手机 / 电脑";
+  setText(button, installed() ? "已安装 · 查看使用说明" : installPrompt ? "安装 WebPForge" : "安装到手机 / 电脑");
 }
 function syncOffline() {
   const ready = Boolean(navigator.serviceWorker?.controller || registration?.active);
-  offlineStatus.textContent = ready
+  setText(offlineStatus, ready
     ? navigator.onLine ? "离线资源已就绪 · 断网也能转换，图片不上传。" : "当前离线 · 仍可选择图片并转换。"
-    : "首次打开需联网，资源缓存完成后可离线转换。";
+    : "首次打开需联网，资源缓存完成后可离线转换。");
 }
 window.addEventListener("beforeinstallprompt", (event) => {
   event.preventDefault();
@@ -77,8 +78,8 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
     });
     navigator.serviceWorker.ready.then(syncOffline);
   }).catch(() => {
-    offlineStatus.textContent = "离线资源暂未就绪，仍可在线转换；联网后重新打开可再次准备。";
+    setText(offlineStatus, "离线资源暂未就绪，仍可在线转换；联网后重新打开可再次准备。");
   });
 } else {
-  offlineStatus.textContent = "当前环境使用在线版；离线安装请通过 HTTPS 官网在新版浏览器中打开。";
+  setText(offlineStatus, "当前环境使用在线版；离线安装请通过 HTTPS 官网在新版浏览器中打开。");
 }

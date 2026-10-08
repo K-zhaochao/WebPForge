@@ -1,3 +1,4 @@
+import { t, setText, setAttributeText } from "./interface.js";
 import {
   ImageInputError,
   MAX_FILE_BYTES,
@@ -17,7 +18,7 @@ const navigation = $("#primary-nav");
 const setMenu = (open) => {
   header.classList.toggle("is-open", open);
   menu.setAttribute("aria-expanded", String(open));
-  menu.setAttribute("aria-label", open ? "关闭导航菜单" : "打开导航菜单");
+  setAttributeText(menu, "aria-label", open ? "关闭导航菜单" : "打开导航菜单");
 };
 menu.addEventListener("click", () =>
   setMenu(menu.getAttribute("aria-expanded") !== "true"),
@@ -34,7 +35,7 @@ document.addEventListener("keydown", (event) => {
     menu.focus();
   }
 });
-const mobileQuery = matchMedia("(max-width: 700px)");
+const mobileQuery = matchMedia("(max-width: 1040px)");
 mobileQuery.addEventListener("change", () => setMenu(false));
 
 const comparison = $("#comparison");
@@ -62,7 +63,7 @@ const state = {
 };
 
 function setStatus(message, error = false) {
-  status.textContent = message;
+  setText(status, message);
   status.classList.toggle("is-error", error);
 }
 
@@ -85,9 +86,9 @@ function syncDownload() {
 }
 
 function showPending(message) {
-  indicator.textContent = "转换中";
+  setText(indicator, "转换中");
   $("#saving-number").textContent = "…";
-  $("#saving-label").textContent = "正在计算真实体积";
+  setText($("#saving-label"), "正在计算真实体积");
   $("#converted-size").textContent = "—";
   setStatus(message);
   syncDownload();
@@ -102,14 +103,14 @@ function renderResult(output) {
   number.append(unit);
   number.style.fontSize =
     savings.number.length > 5 ? "clamp(30px, 4vw, 52px)" : "";
-  $("#saving-label").textContent = savings.label;
+  setText($("#saving-label"), savings.label);
   $("#original-size").textContent = formatBytes(output.source.file.size);
   $("#converted-size").textContent = formatBytes(output.blob.size);
   $("#output-size-bar").style.width =
     `${Math.min(100, (output.blob.size / output.source.file.size) * 100)}%`;
-  indicator.textContent = "真实转换";
+  setText(indicator, "真实转换");
   afterImage.src = output.url;
-  afterImage.alt = `${output.source.label}，质量 ${output.quality} 的 WebP 转换结果`;
+  setAttributeText(afterImage, "alt", "{name}，质量 {quality} 的 WebP 转换结果", {name: sourceLabel(output.source), quality: output.quality});
   setStatus(
     savings.smaller
       ? "转换完成。图片没有离开你的设备。"
@@ -123,7 +124,7 @@ function updateQualityLabel() {
   qualityValue.value = String(quality);
   const position = ((quality - 1) / 99) * 100;
   qualityRange.style.background = `linear-gradient(to right, var(--lime) ${position}%, #515b45 ${position}%)`;
-  $("#quality-help").textContent =
+  setText($("#quality-help"),
     quality === 100
       ? "100 仍为有损编码。需要无损？请用桌面版。"
       : quality < 50
@@ -132,7 +133,7 @@ function updateQualityLabel() {
           ? "为细节多留一点空间，文件也会相应增大。"
           : quality === 80
             ? "80，适合大多数网页图片的起点。"
-            : "让体积与细节，找到适合这张图片的平衡。";
+            : "让体积与细节，找到适合这张图片的平衡。");
 }
 
 function queueEncoding(immediate = false, recoveryNotice = null) {
@@ -184,9 +185,9 @@ function queueEncoding(immediate = false, recoveryNotice = null) {
           if (previous) URL.revokeObjectURL(previous.url);
         } catch (error) {
           if (version !== state.encodeVersion) return;
-          indicator.textContent = "未完成";
+          setText(indicator, "未完成");
           $("#saving-number").textContent = "—";
-          $("#saving-label").textContent = "换个设置，或使用桌面版";
+          setText($("#saving-label"), "换个设置，或使用桌面版");
           setStatus(
             error instanceof ImageInputError
               ? error.message
@@ -218,7 +219,7 @@ async function loadSource(getFile, label, sampleId = null) {
   state.readController = new AbortController();
   state.loading = true;
   qualityRange.disabled = true;
-  indicator.textContent = "读取中";
+  setText(indicator, "读取中");
   setStatus("正在读取图片，准备本地转换…");
   syncDownload();
   let url;
@@ -250,11 +251,11 @@ async function loadSource(getFile, label, sampleId = null) {
     state.loading = false;
     beforeImage.src = state.source.url;
     afterImage.src = state.source.url;
-    beforeImage.alt = `${state.source.label}原图`;
-    afterImage.alt = `${state.source.label}，正在生成 WebP`;
+    setAttributeText(beforeImage, "alt", "{name}原图", {name: sourceLabel(state.source)});
+    setAttributeText(afterImage, "alt", "{name}，正在生成 WebP", {name: sourceLabel(state.source)});
     $("#before-format").textContent = metadata.label;
     $("#image-name").textContent = sampleId
-      ? `${label} · ${file.name}`
+      ? `${sourceLabel(state.source)} · ${file.name}`
       : file.name;
     $("#image-name").title = file.name;
     $("#image-dimensions").textContent =
@@ -282,12 +283,12 @@ async function loadSource(getFile, label, sampleId = null) {
     } else if (state.source) {
       // Invalid input must not strand a pending quality change. Resume the last
       // valid image with the current setting, keeping the input error visible.
-      queueEncoding(true, message + " 已保留上一张图片继续处理。");
+      queueEncoding(true, [message, "已保留上一张图片继续处理。"]);
       return;
     } else {
-      indicator.textContent = "未完成";
+      setText(indicator, "未完成");
       $("#saving-number").textContent = "—";
-      $("#saving-label").textContent = "选择一张静态图片，再试一次";
+      setText($("#saving-label"), "选择一张静态图片，再试一次");
     }
     setStatus(message, true);
     syncDownload();
@@ -318,14 +319,12 @@ function selectSample(id) {
   );
 }
 
-compareRange.addEventListener("input", () => {
+function updateComparison() {
   const position = Number(compareRange.value);
   comparison.style.setProperty("--compare", `${position}%`);
-  compareRange.setAttribute(
-    "aria-valuetext",
-    `原图占左侧 ${position}%，WebP 占右侧 ${100 - position}%`,
-  );
-});
+  setAttributeText(compareRange, "aria-valuetext", "原图占左侧 {left}%，WebP 占右侧 {right}%", {left: position, right: 100 - position});
+}
+compareRange.addEventListener("input", updateComparison);
 qualityRange.addEventListener("input", () => {
   updateQualityLabel();
   queueEncoding();
@@ -353,7 +352,17 @@ window.addEventListener("pagehide", (event) => {
   if (state.output) URL.revokeObjectURL(state.output.url);
 });
 
+function sourceLabel(source) { return source.sampleId ? t(source.label) : source.label; }
+function refreshImageLabels() {
+  if (!state.source) return;
+  const name = sourceLabel(state.source);
+  setAttributeText(beforeImage, "alt", "{name}原图", {name});
+  setAttributeText(afterImage, "alt", state.output ? "{name}，质量 {quality} 的 WebP 转换结果" : "{name}，正在生成 WebP", {name, quality: state.output?.quality});
+  $("#image-name").textContent = state.source.sampleId ? `${name} · ${state.source.file.name}` : state.source.file.name;
+}
+window.addEventListener("languagechange", refreshImageLabels);
 updateQualityLabel();
+updateComparison();
 try {
   const response = await fetch("assets/samples.json");
   if (!response.ok) throw new Error("Sample manifest unavailable.");
@@ -363,7 +372,7 @@ try {
   if (!state.sourceVersion) selectSample("alpine");
 } catch {
   if (!state.sourceVersion) {
-    indicator.textContent = "等待图片";
+    setText(indicator, "等待图片");
     setStatus("示例暂时无法载入。点击「换成我的图片」仍可在本地转换。", true);
   }
 }

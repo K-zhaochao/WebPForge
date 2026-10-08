@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f5f5ef" />
+    <script src="preferences.js"></script>
     <meta name="webpforge-worker" content="@@WORKER_URL@@" />
     <title>WebPForge — 好画质，轻装上阵。</title>
     <meta
@@ -108,33 +109,32 @@
             ><span class="brand-period">.</span></span
           >
         </a>
-        <button
-          class="menu-toggle"
-          type="button"
-          aria-expanded="false"
-          aria-controls="primary-nav"
-          aria-label="打开导航菜单"
-        >
-          <span></span><span></span>
-        </button>
         <nav class="primary-nav" id="primary-nav" aria-label="主要导航">
-          <a href="#features">为什么选它</a>
           <a href="#playground">在线转换</a>
+          <a href="#features">桌面功能</a>
+          <a href="#download">下载应用</a>
           <a href="#faq">常见问题</a>
+        </nav>
+        <div class="header-tools">
+          <div class="language-switch" role="group" aria-label="选择语言">
+            <button type="button" data-language="zh-CN" lang="zh-CN" aria-pressed="true">中</button>
+            <button type="button" data-language="en" lang="en" aria-pressed="false">EN</button>
+          </div>
+          <button class="theme-toggle tool-button" type="button" aria-label="切换到暗色主题" aria-pressed="false">
+            <svg class="icon theme-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 13a9 9 0 0 1-9.5-9.5A9 9 0 1 0 20.5 13Z" /></svg>
+            <svg class="icon theme-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></svg>
+          </button>
           <a
-            class="nav-github"
+            class="nav-github tool-button"
             href="https://github.com/K-zhaochao/WebPForge"
             target="_blank"
             rel="noopener noreferrer"
             aria-label="在 GitHub 查看源码（新窗口）"
             ><svg aria-hidden="true" class="icon"><use href="#i-github" /></svg
-            ><span>GitHub</span></a
+            ></a
           >
-          <a class="nav-download" href="#download"
-            >免费下载<svg aria-hidden="true" class="icon">
-              <use href="#i-download" /></svg
-          ></a>
-        </nav>
+          <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="primary-nav" aria-label="打开导航菜单"><span></span><span></span></button>
+        </div>
       </div>
     </header>
 
@@ -754,7 +754,7 @@
               </summary>
               <div class="faq-answer">
                 <p>
-                  不会。桌面版完全离线；在线版和手机轻应用也只在你的设备上处理图片。离线缓存只保存网页和公开示例，不保存你选择的图片或转换结果。关闭或更新应用前请下载结果。
+                不会。桌面版完全离线；在线版和手机轻应用也只在你的设备上处理图片。离线缓存只保存网页和公开示例，不保存你选择的图片或转换结果。仅记住语言和主题偏好。关闭或更新应用前请下载结果。
                 </p>
               </div>
             </details>
