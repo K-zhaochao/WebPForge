@@ -63,7 +63,8 @@ if ("serviceWorker" in navigator && window.isSecureContext) {
     updateRequested = true;
     registration.waiting.postMessage({ type: "SKIP_WAITING" });
   });
-  navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).then((value) => {
+  const workerURL = document.querySelector('meta[name="webpforge-worker"]').content;
+  navigator.serviceWorker.register(workerURL, { updateViaCache: "none" }).then((value) => {
     registration = value;
     showUpdate();
     syncOffline();

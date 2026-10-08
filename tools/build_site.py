@@ -157,8 +157,16 @@ def main():
                else refresh_release() if args.refresh_release
                else json.loads((SOURCE / "release.json").read_text(encoding="utf-8")))
     validate_release(release)
+    fingerprint = hashlib.sha256(json.dumps(release, sort_keys=True).encode())
+    for path in sorted(SOURCE.rglob("*")):
+        if path.is_file():
+            fingerprint.update(path.relative_to(SOURCE).as_posix().encode())
+            fingerprint.update(path.read_bytes())
+    build_id = fingerprint.hexdigest()[:16]
+    worker_filename = f"sw.{build_id}.js"
     values = {
         "SITE_URL": SITE_URL,
+        "WORKER_URL": "./" + worker_filename,
         "RELEASE_TAG": release["tag"],
         "RELEASE_URL": release["url"],
         "WINDOWS_URL": release["windows"]["url"],
@@ -182,6 +190,20 @@ def main():
     if OUTPUT.exists():
         shutil.rmtree(OUTPUT)
     shutil.copytree(SOURCE, OUTPUT, ignore=shutil.ignore_patterns("package.json"))
+    # Pages/custom-domain CDNs may cache JS for hours. Content-addressed URLs
+    # keep each HTML/module/font set together and bypass stale edge objects.
+    versioned = {path.name: f"{path.stem}.{build_id}{path.suffix}" for path in OUTPUT.rglob("*")
+                 if path.is_file() and path.suffix in (".js", ".css", ".woff2") and path.name != "sw.js"}
+    def rewrite_references(text):
+        for before, after in versioned.items():
+            text = text.replace(before, after)
+        return text
+    for path in list(OUTPUT.rglob("*")):
+        if path.is_file() and path.name in versioned:
+            if path.suffix in (".js", ".css"):
+                path.write_text(rewrite_references(path.read_text(encoding="utf-8")), encoding="utf-8")
+            path.rename(path.with_name(versioned[path.name]))
+    html = rewrite_references(html)
     (OUTPUT / "index.html").write_text(html, encoding="utf-8")
     (OUTPUT / "release.json").write_text(json.dumps(release, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     (OUTPUT / "CNAME").write_text(urllib.parse.urlsplit(SITE_URL).hostname + "\n", encoding="utf-8")
@@ -208,6 +230,7 @@ def main():
     worker = worker.replace("@@CACHE_VERSION@@", digest.hexdigest()[:16])
     worker = worker.replace("@@PRECACHE_URLS@@", json.dumps(urls, ensure_ascii=False))
     (OUTPUT / "sw.js").write_text(worker, encoding="utf-8")
+    (OUTPUT / worker_filename).write_text(worker, encoding="utf-8")
     print(f"Built {OUTPUT.name}: {reference_count} references checked; release {release['tag']}.")
 
 
