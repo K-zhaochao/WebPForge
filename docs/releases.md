@@ -28,7 +28,7 @@ git push origin v1.2.0
 ```
 
 3. [Build & Release](https://github.com/K-zhaochao/WebPForge/actions/workflows/build.yml) 并行构建 Windows x64、macOS ARM64、macOS Intel。tag 与 APP_VERSION 不一致会终止；Windows 程序通过打包自检。
-4. 三个平台成功后，合并 ZIP、构建对应版本网页包，生成 SHA256SUMS.txt 和 release-manifest.json，创建正式 Release。手动运行只构建，不发布。
+4. 三个平台成功后，保留 Mac 执行权限与符号链接合并 ZIP、校验架构和 bundle 版本、构建对应版本网页包，生成 SHA256SUMS.txt 和 release-manifest.json，创建正式 Release。手动运行只构建，不发布。
 5. [Deploy official website](https://github.com/K-zhaochao/WebPForge/actions/workflows/pages.yml) 在发布工作流完成后同步最新下载地址。这覆盖了 GITHUB_TOKEN 创建的 Release 不触发其他工作流的情况。
 6. 发布后下载 release-manifest.json，保存为 site/release.json 并提交，使本地离线快照与线上一致。
 

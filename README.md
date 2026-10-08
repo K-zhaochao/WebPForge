@@ -247,7 +247,7 @@ git push origin main
 git push origin v1.2.0
 ```
 
-流程见 [`.github/workflows/build.yml`](.github/workflows/build.yml)：Windows 与 Apple Silicon 并行打包 → 汇总为可双击的 zip → 创建 Release 并附上安装包。
+流程见 [`.github/workflows/build.yml`](.github/workflows/build.yml)：Windows x64、macOS ARM64 与 Intel 并行打包 → 汇总为可双击的 zip → 创建 Release 并附上安装包。
 
 自动发布 Windows x64、macOS ARM64 / Intel、Web ZIP 与 SHA256。先更新应用版本、Windows 资源版本和 CHANGELOG，与 tag 保持一致。见 [发布说明](docs/releases.md)。
 

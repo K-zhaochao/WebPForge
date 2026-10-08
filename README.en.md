@@ -217,22 +217,18 @@ pyinstaller --clean --noconfirm build.spec
 
 ## Releasing
 
-Push a version tag and GitHub Actions builds Windows and Apple Silicon and creates the Release:
+Update APP_VERSION in webp_converter.py, both numeric and string versions in version_info.txt, and CHANGELOG. Test before tagging. Example for a future unused version:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git add .
+git commit -m "Release WebPForge v1.2.0"
+git push origin main
+git tag -a v1.2.0 -m "WebPForge v1.2.0"
+git push origin v1.2.0
 ```
 
-See [`.github/workflows/build.yml`](.github/workflows/build.yml): Windows and Apple Silicon build
-in parallel, results are zipped for double-click use, and the Release is created with the installers attached.
+The workflow packages Windows x64, macOS ARM64 and Intel in parallel, then publishes the three ZIPs, the web ZIP, SHA256SUMS.txt and release-manifest.json. The website refreshes downloads after the release workflow completes. Manual runs only build artifacts. See [release maintenance](docs/releases.md).
 
-The Intel build lives in [`.github/workflows/build-intel.yml`](.github/workflows/build-intel.yml) and is
-triggered manually — **deliberately kept out of the automatic pipeline**, because GitHub's Intel runners
-often queue for 30+ minutes and would stall every release.
-
-The release notes template lives in [`.github/RELEASE_BODY.md`](.github/RELEASE_BODY.md);
-the version and download file names are substituted automatically at publish time.
 
 ---
 

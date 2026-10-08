@@ -21,18 +21,13 @@ log() { echo "[package] $*"; }
 die() { echo "[package][错误] $*" >&2; exit 1; }
 
 command -v zip >/dev/null 2>&1 || die "缺少 zip 命令"
+command -v unzip >/dev/null 2>&1 || die "缺少 unzip 命令"
 
-# 解压优先用 Python(zipfile 是标准库, 必然可用),
-# 避免再依赖 unzip —— 精简的 runner 镜像并不保证装了它。
+# unzip preserves Unix executable permissions and symlinks. Python extractall
+# silently resets executable permissions, making the final macOS app unlaunchable.
 extract_zip() {
     local src="$1" dest="$2"
-    if command -v python3 >/dev/null 2>&1; then
-        python3 -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$src" "$dest"
-    elif command -v unzip >/dev/null 2>&1; then
-        unzip -q "$src" -d "$dest"
-    else
-        die "既没有 python3 也没有 unzip, 无法解压 $src"
-    fi
+    unzip -q "$src" -d "$dest"
 }
 
 [ -d "$ARTIFACTS_DIR" ] || die "找不到产物目录: $ARTIFACTS_DIR"
@@ -105,7 +100,8 @@ while IFS= read -r APP_ZIP; do
     APP_PATH="$(find "$work" -maxdepth 2 -type d -name 'WebPForge.app' | head -1)"
     [ -n "$APP_PATH" ] || die "解压后没找到 WebPForge.app: $APP_ZIP"
 
-    cp -R "$APP_PATH" "stage-mac-$arch/"
+    [ -x "$APP_PATH/Contents/MacOS/WebPForge" ] || die "macOS executable permission missing: $APP_PATH"
+    cp -a "$APP_PATH" "stage-mac-$arch/"
     for extra in README.md README.en.md LICENSE; do
         [ -f "$extra" ] && cp "$extra" "stage-mac-$arch/"
     done
@@ -127,7 +123,8 @@ while IFS= read -r APP_PATH; do
     log "找到 macOS 应用目录: $APP_PATH  -> 架构 $arch"
     rm -rf "stage-mac-$arch"
     mkdir -p "stage-mac-$arch"
-    cp -R "$APP_PATH" "stage-mac-$arch/"
+    [ -x "$APP_PATH/Contents/MacOS/WebPForge" ] || die "macOS executable permission missing: $APP_PATH"
+    cp -a "$APP_PATH" "stage-mac-$arch/"
     for extra in README.md README.en.md LICENSE; do
         [ -f "$extra" ] && cp "$extra" "stage-mac-$arch/"
     done

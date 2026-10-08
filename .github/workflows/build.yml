@@ -95,14 +95,16 @@ jobs:
         run: |
           node --test tests/site-*.test.mjs
           python -m unittest discover -s tests -p test_site.py -v
+          python -m unittest discover -s tests -p test_release.py -v
       - name: Package release assets
         shell: bash
         run: |
           set -euo pipefail
-          command -v zip || (sudo apt-get update -qq && sudo apt-get install -y zip)
+          (command -v zip && command -v unzip) || (sudo apt-get update -qq && sudo apt-get install -y zip unzip)
           bash tools/package_release.sh artifacts out "${GITHUB_REF_NAME#v}"
           test -f "out/WebPForge-${GITHUB_REF_NAME#v}-macOS-Intel.zip"
           python tools/package_web.py out "$GITHUB_REF_NAME"
+          python tools/verify_release.py out "$GITHUB_REF_NAME"
           sed -e "s|@@TAG@@|${GITHUB_REF_NAME}|g" -e "s|@@VERSION@@|${GITHUB_REF_NAME#v}|g" .github/RELEASE_BODY.md > RELEASE_BODY.md
       - name: Publish complete release
         uses: softprops/action-gh-release@v2

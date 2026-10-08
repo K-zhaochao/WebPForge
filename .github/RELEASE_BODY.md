@@ -20,6 +20,8 @@ SHA256SUMS.txt 提供下载校验值，release-manifest.json 记录版本、下�
 
 ### 本版更新
 
+- 修复 macOS ZIP 缺少执行权限，保留权限与符号链接；发布前检查架构、bundle 版本与 SHA256。
+
 - 在线使用优先，按设备选择下载或安装。
 - 手机安装、离线缓存、显式更新；缓存不保存用户图片。
 - 中文统一自托管 Noto Sans SC，英文 Manrope。
