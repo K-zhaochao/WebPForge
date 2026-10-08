@@ -11,6 +11,8 @@
 
 [中文](README.md) · **English**
 
+[**Official website & live WebP demo (Chinese)**](https://k-zhaochao.github.io/WebPForge/)
+
 Drop in a pile of JPG / PNG / BMP / GIF / TIFF files, hit **Start**, and get smaller WebP images.
 
 </div>
@@ -18,6 +20,11 @@ Drop in a pile of JPG / PNG / BMP / GIF / TIFF files, hit **Start**, and get sma
 ---
 
 ## Download
+
+The [official website](https://k-zhaochao.github.io/WebPForge/) provides release downloads and a working browser demo.
+The demo converts static JPEG, PNG and WebP images locally, with a quality slider, visual comparison and downloadable output.
+Images are never uploaded. For batches, animation and lossless encoding, use the desktop application.
+Website development and GitHub Pages deployment are documented in [docs/website.md](docs/website.md).
 
 Grab the archive for your system from [**Releases**](https://github.com/K-zhaochao/WebPForge/releases/latest) and just double-click it:
 

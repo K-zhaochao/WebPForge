@@ -48,3 +48,7 @@ htmlcov/
 /_msg.txt
 /_c.txt
 /_.txt
+
+# ---- 官网构建 / 浏览器验证产物 ----
+/_site/
+/_site_qa/

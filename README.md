@@ -11,6 +11,8 @@
 
 **中文** · [English](README.en.md)
 
+[**访问官网 · 在线体验 WebP 转换**](https://k-zhaochao.github.io/WebPForge/)
+
 把一堆 JPG / PNG / BMP / GIF / TIFF 拖进去，点一下「开始转换」，就全部变成体积更小的 WebP。
 
 </div>
@@ -38,6 +40,26 @@
 > - **macOS**：右键点击 App →「打开」→ 再点「打开」（或执行 `xattr -cr WebPForge.app`）
 
 ---
+
+## 官网与在线体验
+
+官网：[**k-zhaochao.github.io/WebPForge**](https://k-zhaochao.github.io/WebPForge/)
+
+- 提供 Windows / macOS 正式版下载、产品介绍和常见问题。
+- 在线体验使用浏览器在本机实际编码 WebP，支持画质调整、原图对比、替换图片与下载结果。
+- 不上传用户图片，不使用分析服务；样图和字体均由官网自身托管。
+- 浏览器体验仅处理静态 JPG / PNG / WebP，单张最大 20 MB、1,600 万像素、单边 8,192 像素。批量、动画与无损转换请使用桌面版。
+
+本地预览无需安装前端依赖：
+
+```bash
+python tools/build_site.py
+python -m http.server 4173 --bind 127.0.0.1 --directory _site
+```
+
+访问 `http://127.0.0.1:4173/`。官网使用 GitHub Actions 自动部署到 GitHub Pages，
+更新 `main` 中的官网文件或发布正式 Release 后会自动构建。
+维护方式与验证记录见 [官网维护说明](docs/website.md)。
 
 ## 功能特点
 
@@ -253,14 +275,19 @@ WebPForge/
 ├── convert.bat                  # Windows 命令行启动器
 ├── version_info.txt             # exe 版本资源信息
 ├── assets/                      # 图标（由 make_icon.py 生成）
+├── site/                        # 官网：页面、样式、浏览器转换与自托管素材
+├── docs/website.md              # 官网开发、部署与验证说明
 ├── .github/
 │   ├── workflows/
 │   │   ├── test.yml             # Windows / Linux 回归测试
+│   │   ├── pages.yml            # 官网构建检查与 GitHub Pages 自动部署
 │   │   ├── build.yml            # 自动打包 Windows + Apple Silicon 并发布 Release
 │   │   └── build-intel.yml      # Intel 版手动构建（避免拖慢发布）
 │   └── RELEASE_BODY.md          # Release 说明模板
 ├── tests/                       # 转换、文件保护、CLI 与真实 GUI 回归测试
 └── tools/
+    ├── build_site.py            # 无第三方依赖的官网构建与链接检查
+    ├── prepare_site_assets.py   # 开发时更新样图、字体及分享图
     ├── make_icon.py             # 生成 .ico / .icns 图标
     ├── make_testdata.py         # 生成测试图片（含中文名/透明/动图/损坏文件）
     ├── stress_test.py           # 并发安全压力测试
