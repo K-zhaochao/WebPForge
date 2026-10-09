@@ -164,8 +164,8 @@
             打开网页，就能把图片转为 WebP。<br />图片留在你的设备，也能安装到手机或下载桌面版。
           </p>
           <div class="hero-actions">
-            <a class="button button-dark" href="#playground"
-              >开始在线转换<svg aria-hidden="true" class="icon">
+            <a class="button button-dark" href="#playground" data-select-image
+              >选择图片，在线转换<svg aria-hidden="true" class="icon">
                 <use href="#i-arrow" /></svg
             ></a>
             <a class="button button-outline" href="#download"
@@ -288,22 +288,55 @@
         <div class="container">
           <div class="section-heading">
             <div>
-              <p class="eyebrow"><span>01 /</span> THE DIFFERENCE</p>
-              <h2 id="playground-title">
-                小了多少，<br />眼见为实<span class="heading-dot">。</span>
-              </h2>
+              <p class="eyebrow"><span>01 /</span> ONLINE CONVERTER</p>
+              <h2 id="playground-title">在线转换 <span class="heading-dot">WebP</span></h2>
             </div>
             <p class="section-description">
-              拖一拖，看见画质的分寸。<br />换张照片、调一调质量，找到刚刚好的平衡。<br /><span
-                >每一个数字，都来自这一次真实转换。</span
-              >
+              选一张图片，自动转成 WebP。<br /><span>无需注册、无需安装，图片不会上传。</span>
             </p>
           </div>
 
-          <div class="lab" id="conversion-lab">
+          <div class="converter-tool" id="converter-tool">
+            <ol class="converter-steps" aria-label="在线转换步骤">
+              <li data-step="select" aria-current="step"><span class="step-number">1</span><span><strong>选择图片</strong><small>点击、拖入或粘贴</small></span></li>
+              <li data-step="convert"><span class="step-number">2</span><span><strong>自动转换</strong><small>调画质，比较效果</small></span></li>
+              <li data-step="download"><span class="step-number">3</span><span><strong>下载 WebP</strong><small>保存到你的设备</small></span></li>
+            </ol>
+            <div class="upload-dropzone" id="upload-dropzone" aria-describedby="upload-help">
+              <div class="drop-guide" id="drop-guide">
+                <span class="drop-icon" aria-hidden="true"><svg class="icon"><use href="#i-image" /></svg><span>+</span></span>
+                <h3><span class="drop-desktop">把图片拖到这里</span><span class="drop-mobile">选择一张图片</span></h3>
+                <p>或点击下方按钮，选好后自动转换。</p>
+              </div>
+              <div class="source-summary" id="source-summary" hidden>
+                <svg class="icon" aria-hidden="true"><use href="#i-image" /></svg>
+                <div><span class="source-kind" id="source-kind">你的图片</span><strong id="current-source-name"></strong></div>
+              </div>
+              <div class="upload-actions">
+                <button id="upload-button" class="button button-lime choose-image" type="button" data-select-image><svg class="icon" aria-hidden="true"><use href="#i-plus" /></svg><span id="upload-label">选择图片</span></button>
+                <button id="reset-converter" class="reset-converter" type="button" hidden>重新开始</button>
+              </div>
+              <p id="upload-help" class="upload-help">JPG / PNG / WebP · 单张不超过 20 MB</p>
+              <p class="paste-help">也可粘贴截图：Ctrl / ⌘ + V</p>
+              <p class="upload-privacy"><svg class="icon" aria-hidden="true"><use href="#i-lock" /></svg>本地处理 · 不上传图片</p>
+              <span class="drop-overlay" aria-hidden="true">松开鼠标，开始转换</span>
+              <input id="file-input" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" hidden aria-label="选择本地静态图片" />
+            </div>
+            <div class="sample-toolbar">
+              <p>没有图片？先用示例试试</p>
+              <div class="sample-list" role="group" aria-label="选择示例图片">
+                <button class="sample-button" data-sample="alpine" type="button" aria-pressed="false"><img src="assets/alpine-thumb.webp" alt="" width="32" height="26" loading="lazy" /><span>山野</span></button>
+                <button class="sample-button" data-sample="ocean" type="button" aria-pressed="false"><img src="assets/ocean-thumb.webp" alt="" width="32" height="26" loading="lazy" /><span>海岸</span></button>
+                <button class="sample-button" data-sample="forest" type="button" aria-pressed="false"><img src="assets/forest-thumb.webp" alt="" width="32" height="26" loading="lazy" /><span>森林</span></button>
+              </div>
+            </div>
+            <p class="sample-notice" id="sample-notice" hidden>当前是示例图片。转换自己的图片，请点击「更换图片」。</p>
+            <p class="conversion-status" id="conversion-status" role="status" aria-live="polite">等待选择图片，选好后自动转换。</p>
+
+          <div class="lab" id="conversion-lab" hidden role="region" aria-label="转换结果">
             <div class="lab-topline">
               <span class="mono"
-                ><span class="status-dot"></span>THE COMPRESSION LAB</span
+                ><span class="status-dot"></span>转换结果</span
               ><span
                 ><svg aria-hidden="true" class="icon">
                   <use href="#i-lock" /></svg
@@ -357,72 +390,6 @@
                       <use href="#i-compare" /></svg
                     >拖动，比较细节</span
                   >
-                </div>
-                <div class="sample-toolbar">
-                  <div
-                    class="sample-list"
-                    role="group"
-                    aria-label="选择示例图片"
-                  >
-                    <button
-                      class="sample-button is-active"
-                      data-sample="alpine"
-                      type="button"
-                      aria-pressed="true"
-                    >
-                      <img
-                        src="assets/alpine-thumb.webp"
-                        alt=""
-                        width="32"
-                        height="26"
-                        loading="lazy"
-                      /><span>山野</span>
-                    </button>
-                    <button
-                      class="sample-button"
-                      data-sample="ocean"
-                      type="button"
-                      aria-pressed="false"
-                    >
-                      <img
-                        src="assets/ocean-thumb.webp"
-                        alt=""
-                        width="32"
-                        height="26"
-                        loading="lazy"
-                      /><span>海岸</span>
-                    </button>
-                    <button
-                      class="sample-button"
-                      data-sample="forest"
-                      type="button"
-                      aria-pressed="false"
-                    >
-                      <img
-                        src="assets/forest-thumb.webp"
-                        alt=""
-                        width="32"
-                        height="26"
-                        loading="lazy"
-                      /><span>森林</span>
-                    </button>
-                  </div>
-                  <button
-                    id="upload-button"
-                    class="upload-button"
-                    type="button"
-                  >
-                    <svg aria-hidden="true" class="icon">
-                      <use href="#i-plus" /></svg
-                    >换成我的图片
-                  </button>
-                  <input
-                    id="file-input"
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-                    hidden
-                    aria-label="选择本地静态图片"
-                  />
                 </div>
                 <p class="image-caption">
                   <span id="image-name">山野 · alpine.jpg</span
@@ -483,14 +450,6 @@
                   >下载 WebP<svg aria-hidden="true" class="icon">
                     <use href="#i-download" /></svg
                 ></a>
-                <p
-                  class="conversion-status"
-                  id="conversion-status"
-                  role="status"
-                  aria-live="polite"
-                >
-                  正在载入示例图片…
-                </p>
               </div>
             </div>
             <div class="lab-bottomline">
@@ -500,12 +459,11 @@
                 万像素。动画与批量转换，请使用桌面版。
               </p>
             </div>
-            <noscript
-              ><p class="noscript-message">
+          </div>
+            <noscript><p class="noscript-message">
                 开启 JavaScript
                 即可使用本地转换体验。桌面版下载和其他页面内容仍可正常使用。
-              </p></noscript
-            >
+              </p></noscript>
           </div>
         </div>
       </section>

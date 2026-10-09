@@ -1,4 +1,5 @@
 import { t, setText, setAttributeText } from "./interface.js";
+import { bindImageIngress } from "./image-input.js";
 import {
   ImageInputError,
   MAX_FILE_BYTES,
@@ -49,6 +50,10 @@ const indicator = $("#result-indicator");
 const download = $("#download-result");
 const fileInput = $("#file-input");
 const sampleButtons = [...document.querySelectorAll("[data-sample]")];
+const tool = $("#converter-tool");
+const dropzone = $("#upload-dropzone");
+const resultPanel = $("#conversion-lab");
+const stepItems = [...document.querySelectorAll("[data-step]")];
 
 const state = {
   source: null,
@@ -60,11 +65,38 @@ const state = {
   readController: null,
   encodeChain: Promise.resolve(),
   samples: new Map(),
+  selectionVersion: 0,
+  stage: "select",
 };
+
+function syncWorkbench() {
+  const hasSource = Boolean(state.source);
+  tool.classList.toggle("has-image", hasSource);
+  dropzone.classList.toggle("is-compact", hasSource);
+  $("#drop-guide").hidden = hasSource;
+  $("#source-summary").hidden = !hasSource;
+  $("#reset-converter").hidden = !hasSource && !state.loading;
+  $("#sample-notice").hidden = !state.source?.sampleId;
+  resultPanel.hidden = !hasSource;
+  setText($("#upload-label"), hasSource ? "更换图片" : "选择图片");
+  if (hasSource) {
+    $("#current-source-name").textContent = state.source.file.name;
+    $("#current-source-name").title = state.source.file.name;
+    setText($("#source-kind"), state.source.sampleId ? "示例图片" : "你的图片");
+  }
+  const active = state.stage === "select" ? 0 : state.stage === "download" ? 2 : 1;
+  stepItems.forEach((item, index) => {
+    item.classList.toggle("is-complete", index < active);
+    if (index === active) item.setAttribute("aria-current", "step");
+    else item.removeAttribute("aria-current");
+  });
+  resultPanel.setAttribute("aria-busy", String(state.loading || state.stage === "convert"));
+}
 
 function setStatus(message, error = false) {
   setText(status, message);
   status.classList.toggle("is-error", error);
+  syncWorkbench();
 }
 
 function syncDownload() {
@@ -86,6 +118,7 @@ function syncDownload() {
 }
 
 function showPending(message) {
+  state.stage = "convert";
   setText(indicator, "转换中");
   $("#saving-number").textContent = "…";
   setText($("#saving-label"), "正在计算真实体积");
@@ -95,6 +128,7 @@ function showPending(message) {
 }
 
 function renderResult(output) {
+  state.stage = "download";
   const savings = getSavings(output.source.file.size, output.blob.size);
   const number = $("#saving-number");
   number.textContent = savings.number;
@@ -185,6 +219,7 @@ function queueEncoding(immediate = false, recoveryNotice = null) {
           if (previous) URL.revokeObjectURL(previous.url);
         } catch (error) {
           if (version !== state.encodeVersion) return;
+          state.stage = "error";
           setText(indicator, "未完成");
           $("#saving-number").textContent = "—";
           setText($("#saving-label"), "换个设置，或使用桌面版");
@@ -212,12 +247,14 @@ function queueEncoding(immediate = false, recoveryNotice = null) {
 }
 
 async function loadSource(getFile, label, sampleId = null) {
+  ++state.selectionVersion; // Cancels sample clicks waiting for their manifest.
   const version = ++state.sourceVersion;
   ++state.encodeVersion;
   clearTimeout(state.timer);
   state.readController?.abort();
   state.readController = new AbortController();
   state.loading = true;
+  state.stage = "convert";
   qualityRange.disabled = true;
   setText(indicator, "读取中");
   setStatus("正在读取图片，准备本地转换…");
@@ -270,9 +307,11 @@ async function loadSource(getFile, label, sampleId = null) {
     if (previousSource) URL.revokeObjectURL(previousSource.url);
     if (previousOutput) URL.revokeObjectURL(previousOutput.url);
     queueEncoding(true);
+    resultPanel.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
   } catch (error) {
     if (version !== state.sourceVersion) return;
     state.loading = false;
+    state.stage = state.source ? "error" : "select";
     qualityRange.disabled = !state.source;
     const message =
       error instanceof ImageInputError
@@ -297,7 +336,10 @@ async function loadSource(getFile, label, sampleId = null) {
   }
 }
 
-function selectSample(id) {
+async function selectSample(id) {
+  const selection = ++state.selectionVersion;
+  await sampleManifest;
+  if (selection !== state.selectionVersion) return;
   const sample = state.samples.get(id);
   if (!sample) {
     setStatus("示例暂时无法读取，你仍可以选择自己的图片。", true);
@@ -332,11 +374,54 @@ qualityRange.addEventListener("input", () => {
 sampleButtons.forEach((button) =>
   button.addEventListener("click", () => selectSample(button.dataset.sample)),
 );
-$("#upload-button").addEventListener("click", () => fileInput.click());
+document.querySelectorAll("[data-select-image]").forEach((button) => {
+  button.addEventListener("click", (event) => { event.preventDefault(); fileInput.click(); });
+});
+const ingress = bindImageIngress({
+  document,
+  target: tool,
+  onFile: (file) => loadSource(async () => file, file.name),
+  onError: (error) => setStatus(error.message, true),
+  onDrag: (active) => dropzone.classList.toggle("is-drag-over", active),
+});
 fileInput.addEventListener("change", () => {
-  const file = fileInput.files?.[0];
+  ingress.accept(fileInput.files);
   fileInput.value = "";
-  if (file) loadSource(async () => file, file.name);
+});
+$("#reset-converter").addEventListener("click", () => {
+  ++state.selectionVersion;
+  ++state.sourceVersion;
+  ++state.encodeVersion;
+  state.readController?.abort();
+  clearTimeout(state.timer);
+  if (state.source) URL.revokeObjectURL(state.source.url);
+  if (state.output) URL.revokeObjectURL(state.output.url);
+  state.source = state.output = null;
+  state.loading = false;
+  state.stage = "select";
+  qualityRange.value = "80";
+  qualityRange.disabled = true;
+  compareRange.value = "50";
+  updateQualityLabel();
+  updateComparison();
+  beforeImage.removeAttribute("src");
+  afterImage.removeAttribute("src");
+  setAttributeText(beforeImage, "alt", "原图");
+  setAttributeText(afterImage, "alt", "转换结果");
+  for (const id of ["#image-name", "#current-source-name", "#image-dimensions"]) {
+    $(id).textContent = "";
+    $(id).removeAttribute("title");
+  }
+  for (const id of ["#saving-number", "#original-size", "#converted-size"]) $(id).textContent = "—";
+  setText(indicator, "准备中");
+  setText($("#saving-label"), "正在准备真实转换");
+  $("#output-size-bar").style.width = "0%";
+  sampleButtons.forEach((button) => { button.classList.remove("is-active"); button.setAttribute("aria-pressed", "false"); });
+  setStatus("等待选择图片，选好后自动转换。");
+  syncDownload();
+  ingress.resetDrag();
+  $("#upload-button").focus({ preventScroll: true });
+  dropzone.scrollIntoView({ block: "center", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
 });
 download.addEventListener("click", (event) => {
   if (!syncDownload()) event.preventDefault();
@@ -360,19 +445,12 @@ function refreshImageLabels() {
   setAttributeText(afterImage, "alt", state.output ? "{name}，质量 {quality} 的 WebP 转换结果" : "{name}，正在生成 WebP", {name, quality: state.output?.quality});
   $("#image-name").textContent = state.source.sampleId ? `${name} · ${state.source.file.name}` : state.source.file.name;
 }
-window.addEventListener("languagechange", refreshImageLabels);
+window.addEventListener("languagechange", () => { refreshImageLabels(); syncWorkbench(); });
 updateQualityLabel();
 updateComparison();
-try {
-  const response = await fetch("assets/samples.json");
+syncWorkbench();
+const sampleManifest = fetch("assets/samples.json").then(async (response) => {
   if (!response.ok) throw new Error("Sample manifest unavailable.");
   const samples = await response.json();
   state.samples = new Map(samples.map((sample) => [sample.id, sample]));
-  // A user may already have chosen a local file while the manifest was loading.
-  if (!state.sourceVersion) selectSample("alpine");
-} catch {
-  if (!state.sourceVersion) {
-    setText(indicator, "等待图片");
-    setStatus("示例暂时无法载入。点击「换成我的图片」仍可在本地转换。", true);
-  }
-}
+}).catch(() => { /* Samples are optional; choosing a local image still works. */ });

@@ -18,7 +18,7 @@ test("every Chinese static text and accessibility label has an English translati
 });
 
 test("runtime errors, installation guidance and savings labels are localized", async () => {
-  for (const file of ["app.js", "pwa.js", "platform.js", "image-codec.js"]) {
+  for (const file of ["app.js", "pwa.js", "platform.js", "image-codec.js", "image-input.js"]) {
     const strings = [...(await source(file)).matchAll(/"([^"\n]*[\u4e00-\u9fff][^"\n]*)"/g)];
     for (const [, text] of strings) assert.ok(Object.hasOwn(english, normalize(text)), `${file}: ${text}`);
   }
